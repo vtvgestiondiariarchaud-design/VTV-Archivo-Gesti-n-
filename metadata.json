@@ -1,0 +1,6 @@
+{
+  "name": "Control de Archivo Audiovisual VTV",
+  "description": "Sistema de gestión, catalogación de material audiovisual y control de personal y guardias para VTV.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

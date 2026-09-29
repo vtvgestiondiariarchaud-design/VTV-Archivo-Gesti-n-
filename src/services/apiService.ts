@@ -1,0 +1,2186 @@
+import { MaterialSignal, SignalType, Personnel, GuardShiftRecord, MaterialFamilyGroup, AppState, MaterialStatus, MonthlyArchiveLog, UserProfile, BackupSnapshot } from '../types';
+import { INITIAL_MATERIALS, INITIAL_PERSONNEL, INITIAL_GUARD_SHIFTS, DEFAULT_USERS, DEFAULT_APPS_SCRIPT_URL, GUEST_USER, isBlockedUserName } from '../data/initialData';
+
+const LOCAL_STORAGE_KEY_MATERIALS = 'vtv_archivo_materials_v1';
+const LOCAL_STORAGE_KEY_PERSONNEL = 'vtv_archivo_personnel_v1';
+const LOCAL_STORAGE_KEY_SHIFTS = 'vtv_archivo_shifts_v1';
+const LOCAL_STORAGE_KEY_APPS_SCRIPT_URL = 'vtv_archivo_apps_script_url_v1';
+const LOCAL_STORAGE_KEY_USER = 'vtv_archivo_active_user_v1';
+const LOCAL_STORAGE_KEY_PINS = 'vtv_archivo_user_pins_v1';
+const LOCAL_STORAGE_KEY_MONTHLY_ARCHIVES = 'vtv_archivo_monthly_archives_v1';
+export const LOCAL_STORAGE_KEY_BACKUP_SNAPSHOTS = 'vtv_archivo_backup_snapshots_v1';
+export const LOCAL_STORAGE_KEY_SESSION_START = 'vtv_archivo_session_start_v1';
+export const SESSION_MAX_DURATION_MS = 60 * 60 * 1000; // 1 hora exacta (3,600,000 ms)
+
+export function saveLocalSessionStartTime(timestamp = Date.now()): void {
+  try {
+    localStorage.setItem(LOCAL_STORAGE_KEY_SESSION_START, String(timestamp));
+  } catch (e) {}
+}
+
+export function clearLocalSessionStartTime(): void {
+  try {
+    localStorage.removeItem(LOCAL_STORAGE_KEY_SESSION_START);
+  } catch (e) {}
+}
+
+export function getLocalSessionStartTime(): number | null {
+  try {
+    const val = localStorage.getItem(LOCAL_STORAGE_KEY_SESSION_START);
+    return val ? Number(val) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+export function isSessionExpired(): boolean {
+  try {
+    const startStr = localStorage.getItem(LOCAL_STORAGE_KEY_SESSION_START);
+    if (!startStr) return true;
+    const startTime = Number(startStr);
+    if (isNaN(startTime) || startTime <= 0) return true;
+    return (Date.now() - startTime) >= SESSION_MAX_DURATION_MS;
+  } catch (e) {
+    return true;
+  }
+}
+
+// Helper for duration conversions
+export function durationToSeconds(durationInput?: string | number | null): number {
+  if (durationInput === undefined || durationInput === null || durationInput === '') return 0;
+  if (typeof durationInput === 'number') {
+    if (isNaN(durationInput) || durationInput < 0) return 0;
+    if (durationInput > 86400 * 30) return 0;
+    let secs = Math.floor(durationInput);
+    let hh = Math.floor(secs / 3600);
+    if (hh >= 19 && hh <= 23) {
+      hh = (hh + 4) % 24;
+      secs = hh * 3600 + (secs % 3600);
+    }
+    return secs;
+  }
+
+  const str = String(durationInput).trim();
+  if (!str) return 0;
+
+  // Extract time from ISO timestamp or date prefix (e.g., "1899-12-30T01:15:00.000Z")
+  const timeMatch = str.match(/(?:[T\s]|^)(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if (timeMatch && (str.includes('-') || str.includes('/') || str.toLowerCase().includes('t') || str.toLowerCase().includes('gmt'))) {
+    let hh = parseInt(timeMatch[1], 10) || 0;
+    const mm = parseInt(timeMatch[2], 10) || 0;
+    const ss = parseInt(timeMatch[3], 10) || 0;
+    if (hh >= 1800) hh = 0;
+    if (hh >= 19 && hh <= 23) {
+      hh = (hh + 4) % 24;
+    }
+    return hh * 3600 + mm * 60 + ss;
+  }
+
+  // Standard split by ":"
+  const parts = str.split(':').map((p) => p.trim());
+  if (parts.length === 3) {
+    let hh = parseInt(parts[0], 10) || 0;
+    const mm = parseInt(parts[1], 10) || 0;
+    const ss = parseInt(parts[2], 10) || 0;
+    if (hh >= 1800) hh = 0; // Guard against corrupt 1899 hours from Sheets epoch
+    if (hh >= 19 && hh <= 23) {
+      hh = (hh + 4) % 24;
+    }
+    return hh * 3600 + mm * 60 + ss;
+  } else if (parts.length === 2) {
+    const mm = parseInt(parts[0], 10) || 0;
+    const ss = parseInt(parts[1], 10) || 0;
+    return mm * 60 + ss;
+  } else if (parts.length === 1 && !isNaN(Number(str))) {
+    const val = Number(str);
+    if (val > 86400 * 30) return 0;
+    let secs = Math.floor(val);
+    let hh = Math.floor(secs / 3600);
+    if (hh >= 19 && hh <= 23) {
+      hh = (hh + 4) % 24;
+      secs = hh * 3600 + (secs % 3600);
+    }
+    return secs;
+  }
+
+  return 0;
+}
+
+export function secondsToDuration(totalSeconds: number): string {
+  if (isNaN(totalSeconds) || totalSeconds <= 0) return '00:00:00';
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+
+  const pad = (num: number) => num.toString().padStart(2, '0');
+  return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+}
+
+export function formatDurationHHMMSS(durationInput?: string | number | null): string {
+  const secs = durationToSeconds(durationInput);
+  return secondsToDuration(secs);
+}
+
+export function getLocalDateISOString(d = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+export function format12HourTime(h: number, m: number, includeSeconds = false, s = 0): string {
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  let h12 = h % 12;
+  if (h12 === 0) h12 = 12;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  if (includeSeconds) {
+    return `${pad(h12)}:${pad(m)}:${pad(s)} ${ampm}`;
+  }
+  return `${pad(h12)}:${pad(m)} ${ampm}`;
+}
+
+export function normalizeDateString(val: any): string {
+  if (!val) return '';
+  const str = String(val).trim();
+  if (!str) return '';
+
+  // 1. If string starts with YYYY-MM-DD
+  const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+  }
+
+  // 2. If DD/MM/YYYY or D/M/YYYY or DD-MM-YYYY
+  const dmyMatch = str.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/);
+  if (dmyMatch) {
+    const pad = (n: string) => n.padStart(2, '0');
+    return `${dmyMatch[3]}-${pad(dmyMatch[2])}-${pad(dmyMatch[1])}`;
+  }
+
+  // 3. Try parsing JS Date
+  const d = new Date(val);
+  if (!isNaN(d.getTime())) {
+    const year = d.getFullYear();
+    if (year >= 2000) {
+      return getLocalDateISOString(d);
+    }
+  }
+
+  return str.substring(0, 10);
+}
+
+export function parseAnyDate(dateInput?: string): Date {
+  if (!dateInput) return new Date();
+  const str = dateInput.trim();
+
+  // Check for AM/PM suffix
+  const isPM = /PM$/i.test(str) || /p\.?\s*m\.?$/i.test(str);
+  const isAM = /AM$/i.test(str) || /a\.?\s*m\.?$/i.test(str);
+
+  // Match DD/MM/YYYY hh:mm:ss or DD/MM/YYYY hh:mm
+  const ddmmyyyyMatch = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+  if (ddmmyyyyMatch) {
+    const [, day, month, year, rawHh, mm = '0', ss = '0'] = ddmmyyyyMatch;
+    let hh = rawHh !== undefined ? Number(rawHh) : 0;
+    if (isPM && hh < 12) hh += 12;
+    if (isAM && hh === 12) hh = 0;
+    return new Date(Number(year), Number(month) - 1, Number(day), hh, Number(mm), Number(ss));
+  }
+
+  // Match YYYY-MM-DD hh:mm:ss or YYYY-MM-DD
+  const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+  if (isoMatch) {
+    const [, year, month, day, rawHh, mm = '0', ss = '0'] = isoMatch;
+    let hh = rawHh !== undefined ? Number(rawHh) : 0;
+    if (isPM && hh < 12) hh += 12;
+    if (isAM && hh === 12) hh = 0;
+    return new Date(Number(year), Number(month) - 1, Number(day), hh, Number(mm), Number(ss));
+  }
+
+  const d = new Date(str);
+  if (!isNaN(d.getTime())) return d;
+
+  return new Date();
+}
+
+export function getFormattedDateTime(dateInput?: Date | string | number): string {
+  const formatObj = (d: Date) => {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const day = pad(d.getDate());
+    const month = pad(d.getMonth() + 1);
+    const year = d.getFullYear();
+    const timeStr = format12HourTime(d.getHours(), d.getMinutes());
+    return `${day}/${month}/${year} ${timeStr}`;
+  };
+
+  if (!dateInput) {
+    return formatObj(new Date());
+  }
+
+  if (dateInput instanceof Date) {
+    return formatObj(dateInput);
+  }
+
+  if (typeof dateInput === 'string') {
+    const str = dateInput.trim();
+    if (!str) return getFormattedDateTime();
+
+    // Match DD/MM/YYYY with AM/PM already present
+    const ddmmyyyyAmPmMatch = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|am|pm)$/i);
+    if (ddmmyyyyAmPmMatch) {
+      const [, day, month, year, rawHh, mm, , ampm] = ddmmyyyyAmPmMatch;
+      const pad = (n: string) => n.padStart(2, '0');
+      let hh = Number(rawHh);
+      if (hh === 0) hh = 12;
+      return `${pad(day)}/${pad(month)}/${year} ${pad(String(hh))}:${pad(mm)} ${ampm.toUpperCase()}`;
+    }
+
+    // Match DD/MM/YYYY HH:mm without AM/PM
+    const ddmmyyyyMatch = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{1,2}))?/);
+    if (ddmmyyyyMatch) {
+      const [, day, month, year, rawHh = '0', mm = '0'] = ddmmyyyyMatch;
+      const pad = (n: string) => n.padStart(2, '0');
+      const timeStr = format12HourTime(Number(rawHh), Number(mm));
+      return `${pad(day)}/${pad(month)}/${year} ${timeStr}`;
+    }
+
+    // Match YYYY-MM-DD HH:mm or ISO
+    const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{1,2}):(\d{1,2}))?/);
+    if (isoMatch) {
+      const [, year, month, day, rawHh = '0', mm = '0'] = isoMatch;
+      const pad = (n: string) => n.padStart(2, '0');
+      const timeStr = format12HourTime(Number(rawHh), Number(mm));
+      return `${pad(day)}/${pad(month)}/${year} ${timeStr}`;
+    }
+
+    const parsedDate = new Date(str);
+    if (!isNaN(parsedDate.getTime())) {
+      return formatObj(parsedDate);
+    }
+
+    return str;
+  }
+
+  const parsedDate = new Date(dateInput);
+  if (!isNaN(parsedDate.getTime())) {
+    return formatObj(parsedDate);
+  }
+
+  return String(dateInput);
+}
+
+export function formatHoursVerbose(totalSeconds: number): string {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  
+  const parts = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0 || hours > 0) parts.push(`${minutes}m`);
+  parts.push(`${seconds}s`);
+  
+  return parts.join(' ');
+}
+
+export const isValidPersonName = (name?: string | null): boolean => {
+  if (!name) return false;
+  const str = String(name).trim();
+  if (!str) return false;
+  const upper = str.toUpperCase();
+  if (
+    upper === 'N/A' ||
+    upper === 'NO' ||
+    upper === 'SI' ||
+    upper === 'SIN ASIGNAR' ||
+    upper === 'UNDEFINED' ||
+    upper === 'NULL'
+  ) {
+    return false;
+  }
+  return true;
+};
+
+const STANDARD_SIGNAL_TYPES: string[] = ['Limpio', 'Insert', 'Master'];
+
+export function sanitizeMaterialSignal(mat: any): MaterialSignal {
+  if (!mat) return mat;
+  let title = String(mat.title || '').trim();
+  let rawSignalType = String(mat.signalType || '').trim();
+  let signalType: SignalType = 'Limpio';
+
+  // Detect and fix inverted Title <-> SignalType (e.g. title is 'Limpio' and signalType is the actual program title)
+  const isTitleAStandardSignal = STANDARD_SIGNAL_TYPES.some(
+    (st) => st.toLowerCase() === title.toLowerCase()
+  );
+  const isSignalTypeStandard = STANDARD_SIGNAL_TYPES.some(
+    (st) => st.toLowerCase() === rawSignalType.toLowerCase()
+  );
+
+  if (isTitleAStandardSignal && !isSignalTypeStandard && rawSignalType.length > 0) {
+    // Inverted! Swap them
+    const tempTitle = title;
+    title = rawSignalType;
+    const matched = STANDARD_SIGNAL_TYPES.find((st) => st.toLowerCase() === tempTitle.toLowerCase());
+    signalType = matched || 'Limpio';
+  } else if (isSignalTypeStandard) {
+    const matched = STANDARD_SIGNAL_TYPES.find((st) => st.toLowerCase() === rawSignalType.toLowerCase());
+    signalType = matched || 'Limpio';
+  } else if (rawSignalType.length > 0) {
+    // Custom Signal Type (e.g., 'Promo', 'Clip', 'Cápsula', 'Extra', 'Resumen', 'Audio', etc.)
+    signalType = rawSignalType;
+  } else {
+    signalType = 'Limpio';
+  }
+
+  // Clean title: Avoid auto-generated legacy notes as title
+  const isLegacyAutoNote = title.toLowerCase().includes('registrada automáticamente en familia') || title.toLowerCase().includes('registrada automaticamente en familia');
+  if (isLegacyAutoNote) {
+    if (mat.notes && mat.notes.trim() && !mat.notes.toLowerCase().includes('registrada autom') && !STANDARD_SIGNAL_TYPES.some((st) => st.toLowerCase() === mat.notes.trim().toLowerCase())) {
+      title = mat.notes.trim();
+    } else {
+      title = '';
+    }
+  }
+
+  const cleanId = String(mat.id || `MAT-${Date.now()}`).trim();
+  const cleanFamilyId = String(mat.familyId || cleanId).trim();
+
+  const isDiscarded = mat.status === 'Descartado' || Boolean(mat.isDiscarded);
+  const isFinalized = !isDiscarded && Boolean(mat.isFinalized || mat.status === 'Finalizado');
+  const isCataloged = !isDiscarded && Boolean(mat.isCataloged || mat.status === 'Por Archivar' || isFinalized);
+
+  let status: MaterialStatus = 'Registrado';
+  if (isDiscarded) status = 'Descartado';
+  else if (isFinalized) status = 'Finalizado';
+  else if (isCataloged) status = 'Por Archivar';
+  else status = (mat.status as MaterialStatus) || 'Registrado';
+
+  const cleanCatalogedBy = (!isDiscarded && isValidPersonName(mat.catalogedBy)) ? String(mat.catalogedBy).trim() : undefined;
+  const cleanFinalizedBy = (!isDiscarded && isValidPersonName(mat.finalizedBy)) ? String(mat.finalizedBy).trim() : undefined;
+  const cleanAssignedTo = isValidPersonName(mat.assignedTo) ? String(mat.assignedTo).trim() : undefined;
+
+  return {
+    ...mat,
+    id: cleanId,
+    familyId: cleanFamilyId,
+    title,
+    signalType: signalType as SignalType,
+    status,
+    isDiscarded,
+    isCataloged,
+    isFinalized,
+    isIngested: mat.isIngested !== false,
+    catalogedBy: cleanCatalogedBy,
+    finalizedBy: cleanFinalizedBy,
+    assignedTo: cleanAssignedTo,
+    duration: formatDurationHHMMSS(mat.duration),
+    creationDate: getFormattedDateTime(mat.creationDate),
+  };
+}
+
+// Group materials by Family ID
+export function groupMaterialsByFamily(materials: MaterialSignal[]): MaterialFamilyGroup[] {
+  if (!Array.isArray(materials)) return [];
+  const sanitized = materials.map(sanitizeMaterialSignal);
+  const familyMap = new Map<string, MaterialSignal[]>();
+
+  sanitized.forEach((mat) => {
+    // Group strictly by familyId so all signals of the same family stay together in one card
+    const cleanFamId = (mat.familyId && mat.familyId.trim()) ? mat.familyId.trim() : mat.id;
+    if (!familyMap.has(cleanFamId)) {
+      familyMap.set(cleanFamId, []);
+    }
+    familyMap.get(cleanFamId)!.push(mat);
+  });
+
+  const groups: MaterialFamilyGroup[] = [];
+
+  familyMap.forEach((signals, familyId) => {
+    // Determine the best clean human title for this family
+    let commonTitle = '';
+
+    // 1. Look for any genuine human title across all signals in this family
+    for (const s of signals) {
+      const t = String(s.title || '').trim();
+      const isAutoId = /^material\s+(mat|fam)-/i.test(t) || /^(mat|fam)-/i.test(t);
+      const isAutoNote = t.toLowerCase().includes('registrada autom');
+      const isStandardSig = STANDARD_SIGNAL_TYPES.some((st) => st.toLowerCase() === t.toLowerCase());
+      const isGeneric = t === 'Sin título' || t === 'Material sin título' || !t;
+
+      if (!isAutoId && !isAutoNote && !isStandardSig && !isGeneric) {
+        commonTitle = t;
+        break;
+      }
+    }
+
+    // 2. If not found in title, check if notes has a human-readable title
+    if (!commonTitle) {
+      for (const s of signals) {
+        const n = String(s.notes || '').trim();
+        const isAutoNote = n.toLowerCase().includes('registrada autom');
+        const isAutoId = /^material\s+(mat|fam)-/i.test(n) || /^(mat|fam)-/i.test(n);
+        const isStandardSig = STANDARD_SIGNAL_TYPES.some((st) => st.toLowerCase() === n.toLowerCase());
+        if (n && !isAutoNote && !isAutoId && !isStandardSig) {
+          commonTitle = n;
+          break;
+        }
+      }
+    }
+
+    // 3. Fallback: if all signals literally only had an ID or no title, use the cleanest non-empty title or 'Material sin título'
+    if (!commonTitle) {
+      const nonIdTitle = signals.find((s) => s.title && s.title.trim() && !/^material\s+(mat|fam)-/i.test(s.title) && !/^(mat|fam)-/i.test(s.title))?.title;
+      commonTitle = nonIdTitle?.trim() || signals[0]?.title?.trim() || 'Material sin título';
+    }
+
+    // Harmonize title and familyId across all signals in this family
+    signals.forEach((s) => {
+      s.title = commonTitle;
+      s.familyId = familyId;
+    });
+
+    // Sort signals in logical order: Limpio, Insert, Master, then custom types
+    const orderScore: Record<string, number> = { Limpio: 1, Insert: 2, Master: 3 };
+    signals.sort((a, b) => (orderScore[a.signalType] || 10) - (orderScore[b.signalType] || 10));
+
+    const mainSignal = signals[0];
+    // Ingested duration sums all signals including discarded ones as requested
+    const totalDurationSecs = signals.reduce((acc, s) => acc + durationToSeconds(s.duration), 0);
+
+    const activeSignals = signals.filter((s) => s.status !== 'Descartado' && !s.isDiscarded);
+    const isAllDiscarded = signals.length > 0 && activeSignals.length === 0;
+
+    // Calculate overall status: discarded signals do not count as tasks for archiving
+    let overallStatus: MaterialStatus = 'Registrado';
+    if (isAllDiscarded) {
+      overallStatus = 'Descartado';
+    } else {
+      const allFinalized = activeSignals.length > 0 && activeSignals.every((s) => s.isFinalized || s.status === 'Finalizado');
+      const anyPorArchivar = activeSignals.some((s) => s.isCataloged || s.status === 'Por Archivar');
+
+      if (allFinalized) {
+        overallStatus = 'Finalizado';
+      } else if (anyPorArchivar || activeSignals.some((s) => s.isFinalized)) {
+        overallStatus = 'Por Archivar';
+      }
+    }
+
+    const hasIngested = signals.some((s) => s.isIngested !== false);
+    const hasCataloged = activeSignals.some((s) => s.isCataloged);
+    const hasFinalizedSignal = activeSignals.some((s) => s.isFinalized);
+    const isAllFinalized = activeSignals.length > 0 && activeSignals.every((s) => s.isFinalized);
+
+    groups.push({
+      familyId: familyId,
+      title: commonTitle,
+      division: mainSignal.division,
+      creationDate: mainSignal.creationDate,
+      createdBy: mainSignal.createdBy,
+      signals,
+      totalDurationSeconds: totalDurationSecs,
+      overallStatus,
+      hasIngested,
+      hasCataloged,
+      isAllFinalized,
+      hasFinalizedSignal,
+      isAllDiscarded,
+    });
+  });
+
+  // Sort groups by creation date descending
+  groups.sort((a, b) => parseAnyDate(b.creationDate).getTime() - parseAnyDate(a.creationDate).getTime());
+
+  return groups;
+}
+
+export function deduplicateMaterials(list: MaterialSignal[]): MaterialSignal[] {
+  if (!Array.isArray(list)) return [];
+  const map = new Map<string, MaterialSignal>();
+  const familySignalToId = new Map<string, string>();
+
+  for (const rawMat of list) {
+    if (!rawMat) continue;
+    const mat = sanitizeMaterialSignal(rawMat);
+    let cleanId = String(mat.id || '').trim();
+    if (!cleanId) continue;
+
+    const famKey = (mat.familyId && mat.signalType)
+      ? (String(mat.familyId).trim().toLowerCase() + '___' + String(mat.signalType).trim().toLowerCase())
+      : null;
+
+    let targetKey = cleanId;
+    if (!map.has(cleanId) && famKey && familySignalToId.has(famKey)) {
+      targetKey = familySignalToId.get(famKey)!;
+    }
+
+    if (!map.has(targetKey)) {
+      map.set(cleanId, mat);
+      if (famKey) familySignalToId.set(famKey, cleanId);
+    } else {
+      // If we already have this ID or Family+SignalType, merge preserving the most complete/advanced state
+      const existing = map.get(targetKey)!;
+      const isDiscarded = mat.status === 'Descartado' || mat.isDiscarded === true || existing.status === 'Descartado' || existing.isDiscarded === true;
+      const isFinalized = !isDiscarded && Boolean(mat.isFinalized || existing.isFinalized || mat.status === 'Finalizado' || existing.status === 'Finalizado');
+      const isCataloged = !isDiscarded && Boolean(mat.isCataloged || existing.isCataloged || isFinalized || mat.status === 'Por Archivar' || existing.status === 'Por Archivar');
+      const isIngested = mat.isIngested !== false && existing.isIngested !== false;
+
+      let status = mat.status || existing.status || 'Registrado';
+      if (isDiscarded) status = 'Descartado';
+      else if (isFinalized) status = 'Finalizado';
+      else if (isCataloged) status = 'Por Archivar';
+
+      // Pick valid non-zero duration
+      let effectiveDuration = mat.duration;
+      const matDurSecs = durationToSeconds(mat.duration);
+      const extDurSecs = durationToSeconds(existing.duration);
+      if (matDurSecs <= 0 && extDurSecs > 0) {
+        effectiveDuration = existing.duration;
+      } else if (matDurSecs > 0) {
+        effectiveDuration = mat.duration;
+      }
+
+      const catalogedBy = isDiscarded
+        ? undefined
+        : (isValidPersonName(mat.catalogedBy) ? mat.catalogedBy : (isValidPersonName(existing.catalogedBy) ? existing.catalogedBy : undefined));
+      const finalizedBy = isDiscarded
+        ? undefined
+        : (isValidPersonName(mat.finalizedBy) ? mat.finalizedBy : (isValidPersonName(existing.finalizedBy) ? existing.finalizedBy : undefined));
+      const assignedTo = isValidPersonName(mat.assignedTo) ? mat.assignedTo : (isValidPersonName(existing.assignedTo) ? existing.assignedTo : undefined);
+
+      const isMatTitleAuto = !mat.title || /^material\s+(mat|fam)-/i.test(mat.title) || /^(mat|fam)-/i.test(mat.title) || mat.title === 'Sin título' || mat.title === 'Material sin título' || mat.title.toLowerCase().includes('registrada autom');
+      const isExtTitleAuto = !existing.title || /^material\s+(mat|fam)-/i.test(existing.title) || /^(mat|fam)-/i.test(existing.title) || existing.title === 'Sin título' || existing.title === 'Material sin título' || existing.title.toLowerCase().includes('registrada autom');
+      const effectiveTitle = (!isMatTitleAuto ? mat.title : (!isExtTitleAuto ? existing.title : (mat.title || existing.title || 'Material sin título')));
+
+      map.set(targetKey, {
+        ...existing,
+        ...mat,
+        id: targetKey,
+        familyId: mat.familyId || existing.familyId || targetKey,
+        title: effectiveTitle,
+        signalType: mat.signalType || existing.signalType,
+        duration: effectiveDuration,
+        notes: mat.notes || existing.notes,
+        isDiscarded,
+        isFinalized,
+        isCataloged,
+        isIngested,
+        ingestedBy: mat.ingestedBy || existing.ingestedBy,
+        ingestedAt: mat.ingestedAt || existing.ingestedAt,
+        status,
+        catalogedBy,
+        catalogedAt: isDiscarded ? undefined : (mat.catalogedAt || existing.catalogedAt),
+        finalizedBy,
+        finalizedAt: isDiscarded ? undefined : (mat.finalizedAt || existing.finalizedAt),
+        assignedTo,
+        assignedPersons: mat.assignedPersons || existing.assignedPersons,
+      });
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+export function deduplicatePersonnel(list: Personnel[]): Personnel[] {
+  const seenIds = new Set<string>();
+  const seenNames = new Set<string>();
+  const result: Personnel[] = [];
+
+  for (const item of list) {
+    if (!item) continue;
+    const cleanId = String(item.id || '').trim();
+    const cleanName = String(item.name || '').trim().toLowerCase();
+
+    if (!cleanId && !cleanName) continue;
+
+    if (cleanId && seenIds.has(cleanId)) continue;
+    if (cleanName && seenNames.has(cleanName)) continue;
+
+    if (cleanId) seenIds.add(cleanId);
+    if (cleanName) seenNames.add(cleanName);
+
+    result.push({
+      ...item,
+      id: cleanId || `per-${Math.random().toString(36).substring(2, 9)}`,
+      name: item.name ? item.name.trim() : 'Personal',
+    });
+  }
+
+  return result;
+}
+
+export function deduplicateGuardShifts(list: GuardShiftRecord[]): GuardShiftRecord[] {
+  if (!Array.isArray(list)) return [];
+  const seenIds = new Set<string>();
+  const seenCombos = new Set<string>();
+  const result: GuardShiftRecord[] = [];
+
+  for (let i = 0; i < list.length; i++) {
+    const s = list[i];
+    if (!s) continue;
+
+    const normDate = normalizeDateString(s.date);
+    const comboKey = `${s.personnelId}_${normDate}_${s.shiftType}`;
+
+    if (comboKey && seenCombos.has(comboKey)) {
+      continue; // Skip duplicate shift assignments for same person and date
+    }
+    if (comboKey) seenCombos.add(comboKey);
+
+    let cleanId = String(s.id || '').trim();
+    if (!cleanId || seenIds.has(cleanId)) {
+      cleanId = `sh-${Date.now()}-${i}-${Math.random().toString(36).substring(2, 6)}`;
+    }
+    seenIds.add(cleanId);
+
+    result.push({
+      ...s,
+      id: cleanId,
+      date: normDate,
+      endDate: s.endDate ? normalizeDateString(s.endDate) : undefined,
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Fusión inteligente de materiales para evitar pérdida de registros locales no sincronizados.
+ * Si un material fue registrado localmente (por ejemplo, del 13/08 en adelante) y aún no está en Google Sheets,
+ * se conserva y se marca para sincronizar a Google Sheets en lugar de borrarlo.
+ */
+export function mergeMaterials(
+  local: MaterialSignal[],
+  remote: MaterialSignal[]
+): { merged: MaterialSignal[]; hasLocalUnsynced: boolean } {
+  if (!remote || remote.length === 0) {
+    return { merged: deduplicateMaterials(local || []), hasLocalUnsynced: (local && local.length > 0) };
+  }
+  if (!local || local.length === 0) {
+    return { merged: deduplicateMaterials(remote), hasLocalUnsynced: false };
+  }
+
+  const cleanRemote = deduplicateMaterials(remote);
+  const remoteMap = new Map<string, MaterialSignal>();
+  cleanRemote.forEach((m) => {
+    if (m && m.id) remoteMap.set(m.id, m);
+  });
+
+  let hasLocalUnsynced = false;
+  const mergedMap = new Map<string, MaterialSignal>();
+
+  // 1. Agregar todos los remotos
+  cleanRemote.forEach((m) => {
+    if (m && m.id) mergedMap.set(m.id, m);
+  });
+
+  // 2. Revisar locales y preservar registros no existentes en remoto o con cambios recientes
+  local.forEach((localItem) => {
+    if (!localItem || !localItem.id) return;
+    if (!remoteMap.has(localItem.id)) {
+      // Registro nuevo creado localmente que no está en Google Sheets: ¡PRESERVAR!
+      mergedMap.set(localItem.id, localItem);
+      hasLocalUnsynced = true;
+    } else {
+      const remoteItem = remoteMap.get(localItem.id)!;
+      const localDurSecs = durationToSeconds(localItem.duration);
+      const remoteDurSecs = durationToSeconds(remoteItem.duration);
+      const isLocalDiscarded = localItem.status === 'Descartado' || Boolean(localItem.isDiscarded);
+      const isRemoteDiscarded = remoteItem.status === 'Descartado' || Boolean(remoteItem.isDiscarded);
+
+      // Si el local tiene un estado más avanzado o diferente (ej. descartado, finalizado o duración modificada)
+      const hasMoreAdvancedState =
+        (isLocalDiscarded && !isRemoteDiscarded) ||
+        (localItem.status === 'Descartado' && remoteItem.status !== 'Descartado') ||
+        (localItem.isFinalized && !remoteItem.isFinalized) ||
+        (localItem.isCataloged && !remoteItem.isCataloged) ||
+        (localDurSecs > 0 && localDurSecs !== remoteDurSecs) ||
+        (isValidPersonName(localItem.catalogedBy) && !isValidPersonName(remoteItem.catalogedBy)) ||
+        (isValidPersonName(localItem.finalizedBy) && !isValidPersonName(remoteItem.finalizedBy)) ||
+        (isValidPersonName(localItem.assignedTo) && !isValidPersonName(remoteItem.assignedTo));
+
+      const isLocalTitleAuto = !localItem.title || /^material\s+(mat|fam)-/i.test(localItem.title) || /^(mat|fam)-/i.test(localItem.title) || localItem.title.toLowerCase().includes('registrada autom');
+      const isRemoteTitleAuto = !remoteItem.title || /^material\s+(mat|fam)-/i.test(remoteItem.title) || /^(mat|fam)-/i.test(remoteItem.title) || remoteItem.title.toLowerCase().includes('registrada autom');
+      const bestTitle = (!isRemoteTitleAuto ? remoteItem.title : (!isLocalTitleAuto ? localItem.title : (remoteItem.title || localItem.title || 'Material sin título')));
+
+      if (hasMoreAdvancedState) {
+        const catBy = isValidPersonName(localItem.catalogedBy)
+          ? localItem.catalogedBy
+          : (isValidPersonName(remoteItem.catalogedBy) ? remoteItem.catalogedBy : undefined);
+        const finBy = isValidPersonName(localItem.finalizedBy)
+          ? localItem.finalizedBy
+          : (isValidPersonName(remoteItem.finalizedBy) ? remoteItem.finalizedBy : undefined);
+        const assTo = isValidPersonName(localItem.assignedTo)
+          ? localItem.assignedTo
+          : (isValidPersonName(remoteItem.assignedTo) ? remoteItem.assignedTo : undefined);
+
+        mergedMap.set(localItem.id, {
+          ...remoteItem,
+          ...localItem,
+          title: bestTitle,
+          duration: localDurSecs > 0 ? localItem.duration : remoteItem.duration,
+          status: isLocalDiscarded ? 'Descartado' : (localItem.status || remoteItem.status),
+          isDiscarded: isLocalDiscarded || isRemoteDiscarded,
+          catalogedBy: catBy,
+          finalizedBy: finBy,
+          assignedTo: assTo,
+        });
+        hasLocalUnsynced = true;
+      } else {
+        // Enriquecer registro remoto con datos de auditoría válidos si faltaban en Sheets
+        const catBy = isValidPersonName(remoteItem.catalogedBy)
+          ? remoteItem.catalogedBy
+          : (isValidPersonName(localItem.catalogedBy) ? localItem.catalogedBy : undefined);
+        const finBy = isValidPersonName(remoteItem.finalizedBy)
+          ? remoteItem.finalizedBy
+          : (isValidPersonName(localItem.finalizedBy) ? localItem.finalizedBy : undefined);
+        const assTo = isValidPersonName(remoteItem.assignedTo)
+          ? remoteItem.assignedTo
+          : (isValidPersonName(localItem.assignedTo) ? localItem.assignedTo : undefined);
+
+        mergedMap.set(localItem.id, {
+          ...localItem,
+          ...remoteItem,
+          title: bestTitle,
+          catalogedBy: catBy,
+          finalizedBy: finBy,
+          assignedTo: assTo,
+        });
+      }
+    }
+  });
+
+  const merged = deduplicateMaterials(
+    Array.from(mergedMap.values()).sort(
+      (a, b) => parseAnyDate(b.creationDate).getTime() - parseAnyDate(a.creationDate).getTime()
+    )
+  );
+
+  return { merged, hasLocalUnsynced };
+}
+
+/**
+ * Fusión inteligente de guardias para evitar sobrescribir turnos agregados recientemente.
+ */
+export function mergeGuardShifts(
+  local: GuardShiftRecord[],
+  remote: GuardShiftRecord[]
+): { merged: GuardShiftRecord[]; hasLocalUnsynced: boolean } {
+  if (!remote || remote.length === 0) {
+    return { merged: deduplicateGuardShifts(local || []), hasLocalUnsynced: (local && local.length > 0) };
+  }
+  if (!local || local.length === 0) {
+    return { merged: deduplicateGuardShifts(remote), hasLocalUnsynced: false };
+  }
+
+  const remoteIds = new Set(remote.map((s) => s.id));
+  let hasLocalUnsynced = false;
+  const combined = [...remote];
+
+  local.forEach((l) => {
+    if (l && l.id && !remoteIds.has(l.id)) {
+      combined.push(l);
+      hasLocalUnsynced = true;
+    }
+  });
+
+  const merged = deduplicateGuardShifts(combined);
+  return { merged, hasLocalUnsynced };
+}
+
+// Local Storage API methods
+export function loadInitialState(): AppState {
+  let materials: MaterialSignal[] = INITIAL_MATERIALS;
+  let personnel: Personnel[] = INITIAL_PERSONNEL;
+  let guardShifts: GuardShiftRecord[] = INITIAL_GUARD_SHIFTS;
+  let appsScriptUrl = DEFAULT_APPS_SCRIPT_URL;
+  let currentUser: UserProfile = GUEST_USER;
+  let monthlyArchives: MonthlyArchiveLog[] = [];
+
+  try {
+    const localMats = localStorage.getItem(LOCAL_STORAGE_KEY_MATERIALS);
+    if (localMats) {
+      const parsed = JSON.parse(localMats);
+      materials = deduplicateMaterials(parsed.map((m: any) => {
+        const isDiscarded = m.status === 'Descartado' || m.isDiscarded === true || String(m.isDiscarded).toUpperCase() === 'SI';
+        const status = isDiscarded ? 'Descartado' : (m.status || 'Registrado');
+        const isFinalized = !isDiscarded && (m.isFinalized !== undefined ? Boolean(m.isFinalized) : (m.status === 'Finalizado'));
+        const isCataloged = !isDiscarded && (m.isCataloged !== undefined ? Boolean(m.isCataloged) : (m.status === 'Por Archivar' || m.status === 'Finalizado'));
+        return {
+          ...m,
+          status,
+          isDiscarded,
+          isCataloged,
+          isFinalized,
+          duration: formatDurationHHMMSS(m.duration),
+          creationDate: getFormattedDateTime(m.creationDate),
+          catalogedAt: !isDiscarded && m.catalogedAt ? getFormattedDateTime(m.catalogedAt) : undefined,
+          finalizedAt: !isDiscarded && m.finalizedAt ? getFormattedDateTime(m.finalizedAt) : undefined,
+          assignedAt: m.assignedAt ? getFormattedDateTime(m.assignedAt) : undefined,
+          isIngested: m.isIngested !== undefined ? m.isIngested : true,
+        };
+      }));
+    } else {
+      materials = deduplicateMaterials(INITIAL_MATERIALS.map((m) => {
+        const isDiscarded = m.status === 'Descartado' || Boolean(m.isDiscarded);
+        const status = isDiscarded ? 'Descartado' : (m.status || 'Registrado');
+        const isFinalized = !isDiscarded && (m.isFinalized !== undefined ? Boolean(m.isFinalized) : (m.status === 'Finalizado'));
+        const isCataloged = !isDiscarded && (m.isCataloged !== undefined ? Boolean(m.isCataloged) : (m.status === 'Por Archivar' || m.status === 'Finalizado'));
+        return {
+          ...m,
+          status,
+          isDiscarded,
+          isCataloged,
+          isFinalized,
+          duration: formatDurationHHMMSS(m.duration),
+          creationDate: getFormattedDateTime(m.creationDate),
+          catalogedAt: !isDiscarded && m.catalogedAt ? getFormattedDateTime(m.catalogedAt) : undefined,
+          finalizedAt: !isDiscarded && m.finalizedAt ? getFormattedDateTime(m.finalizedAt) : undefined,
+          assignedAt: m.assignedAt ? getFormattedDateTime(m.assignedAt) : undefined,
+        };
+      }));
+    }
+
+    const localPer = localStorage.getItem(LOCAL_STORAGE_KEY_PERSONNEL);
+    if (localPer) {
+      try {
+        const parsed: Personnel[] = JSON.parse(localPer);
+        personnel = deduplicatePersonnel(parsed);
+        if (personnel.length === 0) {
+          personnel = deduplicatePersonnel(INITIAL_PERSONNEL);
+        }
+      } catch (e) {
+        personnel = deduplicatePersonnel(INITIAL_PERSONNEL);
+      }
+    } else {
+      personnel = deduplicatePersonnel(INITIAL_PERSONNEL);
+    }
+    saveLocalPersonnel(personnel);
+
+    const localShifts = localStorage.getItem(LOCAL_STORAGE_KEY_SHIFTS);
+    if (localShifts) {
+      try {
+        const parsed = JSON.parse(localShifts);
+        if (Array.isArray(parsed)) {
+          guardShifts = deduplicateGuardShifts(parsed);
+        }
+      } catch (e) {
+        guardShifts = [];
+      }
+    }
+
+    const localUrl = localStorage.getItem(LOCAL_STORAGE_KEY_APPS_SCRIPT_URL);
+    const oldUrlSigs = [
+      'AKfycby2Vn7FENScbW6HQpNcyQ8SIeOl',
+      'AKfycbx14c_iwM0YESVMAQ-ipcDt7cpaD163YMRIjmVt-nqc_pVjuzB6YZHoAK6_2gw0cXjmbA',
+      'AKfycbzVRrthjogYhh98mcQWeK52F6mYXzI8W5ipdBiw3y_q9TwIHesBkDixO2AEQa5sMOkcxw',
+      'AKfycbwOKSB9wqnLqch4KSldRlZG6WiiZjqA4CCAbcPx7UHhpWseKtMXiYVirLbRX2bwTCOLNg'
+    ];
+    if (localUrl && localUrl.trim() && !oldUrlSigs.some(sig => localUrl.includes(sig))) {
+      appsScriptUrl = localUrl.trim();
+    } else {
+      appsScriptUrl = DEFAULT_APPS_SCRIPT_URL;
+      saveLocalAppsScriptUrl(DEFAULT_APPS_SCRIPT_URL);
+    }
+
+    const localUser = localStorage.getItem(LOCAL_STORAGE_KEY_USER);
+    if (localUser) {
+      try {
+        const parsedUser: UserProfile = JSON.parse(localUser);
+        if (isBlockedUserName(parsedUser.name)) {
+          localStorage.removeItem(LOCAL_STORAGE_KEY_USER);
+          clearLocalSessionStartTime();
+          currentUser = GUEST_USER;
+        } else if (parsedUser.isGuest || parsedUser.role === 'Invitado (Solo Lectura)') {
+          currentUser = GUEST_USER;
+        } else if (isSessionExpired()) {
+          // Sesión caducada tras 1 hora
+          localStorage.removeItem(LOCAL_STORAGE_KEY_USER);
+          clearLocalSessionStartTime();
+          currentUser = GUEST_USER;
+        } else {
+          currentUser = parsedUser;
+        }
+      } catch (e) {
+        currentUser = GUEST_USER;
+      }
+    } else {
+      currentUser = GUEST_USER;
+    }
+
+    const localArchives = localStorage.getItem(LOCAL_STORAGE_KEY_MONTHLY_ARCHIVES);
+    if (localArchives) monthlyArchives = JSON.parse(localArchives);
+  } catch (err) {
+    console.error('Error loading local state:', err);
+  }
+
+  return {
+    currentUser,
+    materials,
+    personnel,
+    guardShifts,
+    monthlyArchives,
+    appsScriptUrl,
+    isSyncing: false,
+  };
+}
+
+export function loadLocalMonthlyArchives(): MonthlyArchiveLog[] {
+  try {
+    const local = localStorage.getItem(LOCAL_STORAGE_KEY_MONTHLY_ARCHIVES);
+    return local ? JSON.parse(local) : [];
+  } catch (e) {
+    console.error(e);
+    return [];
+  }
+}
+
+// Safe localStorage setter that gracefully frees up snapshot space if quota limit is reached
+function safeSetItem(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch (e: any) {
+    // If quota exceeded, clean up old snapshots first to guarantee primary database save
+    if (
+      e?.name === 'QuotaExceededError' ||
+      e?.code === 22 ||
+      e?.code === 1014 ||
+      String(e).toLowerCase().includes('quota')
+    ) {
+      console.warn(`Alcanzado límite de cuota en almacenamiento local al guardar '${key}'. Liberando historial de puntos de restauración...`);
+      try {
+        localStorage.removeItem(LOCAL_STORAGE_KEY_BACKUP_SNAPSHOTS);
+        localStorage.setItem(key, value);
+        return;
+      } catch (retryErr) {
+        console.error(`No se pudo guardar '${key}' tras liberar snapshots:`, retryErr);
+      }
+    }
+    console.error(`Error guardando '${key}':`, e);
+  }
+}
+
+export function saveLocalMonthlyArchives(archives: MonthlyArchiveLog[]) {
+  safeSetItem(LOCAL_STORAGE_KEY_MONTHLY_ARCHIVES, JSON.stringify(archives));
+}
+
+export function generateMonthlyArchiveLog(materials: MaterialSignal[], user: UserProfile): MonthlyArchiveLog {
+  const now = new Date();
+  const monthNames = [
+    'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+    'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+  ];
+  const monthPeriod = `${monthNames[now.getMonth()]} ${now.getFullYear()}`;
+  const exportDate = getFormattedDateTime(now);
+
+  let totalSecs = 0;
+  const divisionMap: Record<string, { count: number; seconds: number }> = {};
+
+  const exportedItems = materials.map((m) => {
+    const secs = durationToSeconds(m.duration);
+    totalSecs += secs;
+
+    if (!divisionMap[m.division]) {
+      divisionMap[m.division] = { count: 0, seconds: 0 };
+    }
+    divisionMap[m.division].count += 1;
+    divisionMap[m.division].seconds += secs;
+
+    return {
+      id: m.id,
+      familyId: m.familyId,
+      title: m.title,
+      division: m.division,
+      signalType: m.signalType,
+      duration: m.duration,
+    };
+  });
+
+  return {
+    id: `MAR-${now.getFullYear()}${(now.getMonth() + 1).toString().padStart(2, '0')}-${Math.floor(Math.random() * 899 + 100)}`,
+    monthPeriod,
+    exportDate,
+    exportedBy: user.name,
+    exporterRole: user.role,
+    materialsCount: materials.length,
+    totalDurationSeconds: totalSecs,
+    formattedDuration: formatHoursVerbose(totalSecs),
+    divisionBreakdown: divisionMap,
+    exportedItems,
+  };
+}
+
+export function exportMaterialsToCSV(materials: MaterialSignal[], customFilename?: string): void {
+  const dateStr = getLocalDateISOString();
+  const filename = customFilename || `VTV_Materiales_Export_${dateStr}.csv`;
+
+  const headers = [
+    'ID Material',
+    'ID Familia',
+    'Tipo de Señal',
+    'Título / Descripción',
+    'División',
+    'Duración',
+    'Fecha Creación',
+    'Creado Por',
+    'Rol Creador',
+    'Estado',
+    'Es Solicitud / Tarea',
+    'Asignado A',
+    'Rol Asignado',
+    'Fecha Asignación',
+    'Ingestado',
+    'Ingestado Por',
+    'Catalogado',
+    'Catalogado Por',
+    'Fecha Catalogación',
+    'Finalizado',
+    'Finalizado Por',
+    'Fecha Finalizado',
+    'Notas / Observaciones'
+  ];
+
+  const escapeCSV = (val: string | undefined | null) => {
+    if (val === null || val === undefined) return '""';
+    const clean = String(val).replace(/"/g, '""');
+    return `"${clean}"`;
+  };
+
+  const rows = materials.map((m) => {
+    let assignedStr = 'Sin asignar';
+    if (m.assignedPersons && m.assignedPersons.length > 0) {
+      assignedStr = m.assignedPersons.join(', ');
+    } else if (m.assignedTo) {
+      assignedStr = m.assignedTo;
+    }
+
+    const isDiscarded = m.status === 'Descartado' || Boolean(m.isDiscarded);
+    const status = isDiscarded ? 'Descartado' : (m.status || 'Registrado');
+    const isFinalized = !isDiscarded && Boolean(m.isFinalized || status === 'Finalizado');
+    const isCataloged = !isDiscarded && Boolean(m.isCataloged || status === 'Por Archivar' || isFinalized);
+
+    return [
+      escapeCSV(m.id),
+      escapeCSV(m.familyId || m.id),
+      escapeCSV(m.signalType),
+      escapeCSV(m.title),
+      escapeCSV(m.division),
+      escapeCSV(formatDurationHHMMSS(m.duration)),
+      escapeCSV(m.creationDate),
+      escapeCSV(m.createdBy),
+      escapeCSV(m.creatorRole || m.createdByRole || ''),
+      escapeCSV(status),
+      escapeCSV(m.isRequestTask ? 'SI' : 'NO'),
+      escapeCSV(assignedStr),
+      escapeCSV(m.assignedToRole || ''),
+      escapeCSV(m.assignedAt || ''),
+      escapeCSV(m.isIngested !== false ? 'SI' : 'NO'),
+      escapeCSV(m.ingestedBy || ''),
+      escapeCSV(isCataloged ? 'SI' : 'NO'),
+      escapeCSV(isDiscarded ? 'N/A' : (m.catalogedBy || 'N/A')),
+      escapeCSV(isDiscarded ? 'N/A' : (m.catalogedAt || 'N/A')),
+      escapeCSV(isFinalized ? 'SI' : 'NO'),
+      escapeCSV(isDiscarded ? 'N/A' : (m.finalizedBy || 'N/A')),
+      escapeCSV(isDiscarded ? 'N/A' : (m.finalizedAt || 'N/A')),
+      escapeCSV(m.notes || ''),
+    ];
+  });
+
+  const csvContent = '\uFEFF' + [headers.join(';'), ...rows.map((r) => r.join(';'))].join('\r\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+export function saveLocalMaterials(materials: MaterialSignal[]) {
+  const deduped = deduplicateMaterials(materials);
+  const normalized = deduped.map((m) => ({
+    ...m,
+    duration: formatDurationHHMMSS(m.duration),
+    creationDate: getFormattedDateTime(m.creationDate),
+    catalogedAt: m.catalogedAt ? getFormattedDateTime(m.catalogedAt) : undefined,
+    finalizedAt: m.finalizedAt ? getFormattedDateTime(m.finalizedAt) : undefined,
+    assignedAt: m.assignedAt ? getFormattedDateTime(m.assignedAt) : undefined,
+  }));
+  safeSetItem(LOCAL_STORAGE_KEY_MATERIALS, JSON.stringify(normalized));
+}
+
+export function saveLocalPersonnel(personnel: Personnel[]) {
+  safeSetItem(LOCAL_STORAGE_KEY_PERSONNEL, JSON.stringify(personnel));
+}
+
+export function saveLocalGuardShifts(shifts: GuardShiftRecord[]) {
+  safeSetItem(LOCAL_STORAGE_KEY_SHIFTS, JSON.stringify(shifts));
+}
+
+export function saveLocalAppsScriptUrl(url: string) {
+  safeSetItem(LOCAL_STORAGE_KEY_APPS_SCRIPT_URL, url);
+}
+
+export function saveLocalActiveUser(user: any) {
+  safeSetItem(LOCAL_STORAGE_KEY_USER, JSON.stringify(user));
+}
+
+export function loadLocalUserPins(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(LOCAL_STORAGE_KEY_PINS);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) {
+    console.error(e);
+    return {};
+  }
+}
+
+export function saveLocalUserPins(pins: Record<string, string>) {
+  safeSetItem(LOCAL_STORAGE_KEY_PINS, JSON.stringify(pins));
+}
+
+// Backup & Recovery System
+export function createBackupSnapshot(
+  materials: MaterialSignal[],
+  personnel: Personnel[],
+  guardShifts: GuardShiftRecord[],
+  monthlyArchives: MonthlyArchiveLog[] = [],
+  note: string = 'Respaldo automático'
+): BackupSnapshot | null {
+  try {
+    const raw = localStorage.getItem(LOCAL_STORAGE_KEY_BACKUP_SNAPSHOTS);
+    const existing: BackupSnapshot[] = raw ? JSON.parse(raw) : [];
+
+    const newSnapshot: BackupSnapshot = {
+      id: `SNP-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      timestamp: getFormattedDateTime(new Date()),
+      note,
+      materialsCount: materials.length,
+      personnelCount: personnel.length,
+      shiftsCount: guardShifts.length,
+      materials: JSON.parse(JSON.stringify(materials)),
+      personnel: JSON.parse(JSON.stringify(personnel)),
+      guardShifts: JSON.parse(JSON.stringify(guardShifts)),
+      monthlyArchives: JSON.parse(JSON.stringify(monthlyArchives)),
+    };
+
+    // Keep at most 3 snapshots in local storage to prevent exceeding browser quota
+    const updated = [newSnapshot, ...existing.slice(0, 2)];
+    
+    try {
+      localStorage.setItem(LOCAL_STORAGE_KEY_BACKUP_SNAPSHOTS, JSON.stringify(updated));
+    } catch (quotaErr) {
+      // If quota exceeded, try storing only the single newest snapshot
+      try {
+        localStorage.setItem(LOCAL_STORAGE_KEY_BACKUP_SNAPSHOTS, JSON.stringify([newSnapshot]));
+      } catch (singleErr) {
+        console.warn('No hay espacio suficiente para almacenar un snapshot local adicional en localStorage.');
+      }
+    }
+
+    return newSnapshot;
+  } catch (e) {
+    console.warn('Advertencia al crear snapshot:', e);
+    return null;
+  }
+}
+
+export function loadBackupSnapshots(): BackupSnapshot[] {
+  try {
+    const raw = localStorage.getItem(LOCAL_STORAGE_KEY_BACKUP_SNAPSHOTS);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    console.error('Error loading backup snapshots:', e);
+    return [];
+  }
+}
+
+export function clearBackupSnapshots(): void {
+  try {
+    localStorage.removeItem(LOCAL_STORAGE_KEY_BACKUP_SNAPSHOTS);
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+export function exportStateToJSON(
+  materials: MaterialSignal[],
+  personnel: Personnel[],
+  guardShifts: GuardShiftRecord[],
+  monthlyArchives: MonthlyArchiveLog[] = []
+): void {
+  const data = {
+    exportedAt: new Date().toISOString(),
+    version: '1.0',
+    system: 'VTV Gestión y Archivo Audiovisual',
+    materials,
+    personnel,
+    guardShifts,
+    monthlyArchives,
+  };
+
+  const jsonStr = JSON.stringify(data, null, 2);
+  const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  const dateStr = getLocalDateISOString();
+  link.setAttribute('href', url);
+  link.setAttribute('download', `VTV_Respaldo_Completo_${dateStr}.json`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+export function parseImportedJSON(jsonString: string): {
+  success: boolean;
+  message: string;
+  data?: {
+    materials: MaterialSignal[];
+    personnel: Personnel[];
+    guardShifts: GuardShiftRecord[];
+    monthlyArchives?: MonthlyArchiveLog[];
+  };
+} {
+  try {
+    const parsed = JSON.parse(jsonString);
+    if (!parsed || typeof parsed !== 'object') {
+      return { success: false, message: 'El archivo JSON no tiene un formato válido.' };
+    }
+
+    const rawMats = Array.isArray(parsed.materials) ? parsed.materials : [];
+    const rawPers = Array.isArray(parsed.personnel) ? parsed.personnel : [];
+    const rawShifts = Array.isArray(parsed.guardShifts) ? parsed.guardShifts : [];
+    const rawArchives = Array.isArray(parsed.monthlyArchives) ? parsed.monthlyArchives : [];
+
+    const materials: MaterialSignal[] = rawMats.map((m: any) => ({
+      ...m,
+      duration: formatDurationHHMMSS(m.duration),
+      creationDate: getFormattedDateTime(m.creationDate),
+      catalogedAt: m.catalogedAt ? getFormattedDateTime(m.catalogedAt) : undefined,
+      finalizedAt: m.finalizedAt ? getFormattedDateTime(m.finalizedAt) : undefined,
+      assignedAt: m.assignedAt ? getFormattedDateTime(m.assignedAt) : undefined,
+      isIngested: m.isIngested !== undefined ? m.isIngested : true,
+      isCataloged: m.isCataloged !== undefined ? m.isCataloged : (m.status === 'Por Archivar' || m.status === 'Finalizado'),
+      isFinalized: m.isFinalized !== undefined ? m.isFinalized : (m.status === 'Finalizado'),
+    }));
+
+    const personnel = deduplicatePersonnel(rawPers);
+    const guardShifts = deduplicateGuardShifts(rawShifts);
+
+    return {
+      success: true,
+      message: `Archivo importado exitosamente (${materials.length} materiales, ${personnel.length} personal, ${guardShifts.length} guardias).`,
+      data: {
+        materials,
+        personnel,
+        guardShifts,
+        monthlyArchives: rawArchives,
+      },
+    };
+  } catch (err: any) {
+    return { success: false, message: `Error al leer archivo JSON: ${err.message || err.toString()}` };
+  }
+}
+
+// Formatters for Google Sheets Remote Communication
+export function formatMaterialForSheet(m: MaterialSignal) {
+  let assignedStr = 'Sin asignar';
+  if (m.assignedPersons && m.assignedPersons.length > 0) {
+    assignedStr = m.assignedPersons.join(', ');
+  } else if (m.assignedTo) {
+    assignedStr = m.assignedTo;
+  }
+
+  const isDiscarded = m.status === 'Descartado' || Boolean(m.isDiscarded);
+  const status = isDiscarded ? 'Descartado' : (m.status || 'Registrado');
+  const isFinalized = !isDiscarded && Boolean(m.isFinalized || status === 'Finalizado');
+  const isCataloged = !isDiscarded && Boolean(m.isCataloged || status === 'Por Archivar' || isFinalized);
+
+  return {
+    id: m.id,
+    familyId: m.familyId || m.id,
+    title: m.title,
+    signalType: m.signalType,
+    division: m.division,
+    duration: formatDurationHHMMSS(m.duration),
+    creationDate: m.creationDate,
+    createdBy: m.createdBy,
+    createdByRole: m.creatorRole || m.createdByRole || '',
+    creatorRole: m.creatorRole || m.createdByRole || '',
+    status: status,
+    isDiscarded: isDiscarded,
+    isRequestTask: m.isRequestTask ? true : false,
+    assignedTo: assignedStr,
+    assignedPersons: m.assignedPersons,
+    assignedToRole: m.assignedToRole || '',
+    assignedAt: m.assignedAt || '',
+    isIngested: m.isIngested !== undefined ? m.isIngested : true,
+    ingestedBy: m.ingestedBy || '',
+    ingestedAt: m.ingestedAt || '',
+    isCataloged: isCataloged,
+    catalogedBy: isDiscarded ? 'N/A' : (m.catalogedBy || 'N/A'),
+    catalogedAt: isDiscarded ? 'N/A' : (m.catalogedAt || 'N/A'),
+    isFinalized: isFinalized,
+    finalizedBy: isDiscarded ? 'N/A' : (m.finalizedBy || 'N/A'),
+    finalizedAt: isDiscarded ? 'N/A' : (m.finalizedAt || 'N/A'),
+    notes: m.notes || '',
+  };
+}
+
+export function formatPersonnelForSheet(p: Personnel) {
+  return {
+    id: p.id,
+    name: p.name,
+    role: p.role,
+    division: p.division,
+    guardDaysWorked: Number(p.guardDaysWorked) || 0,
+    daysOffGenerated: Number(p.daysOffGenerated) || 0,
+    daysOffTaken: Number(p.daysOffTaken) || 0,
+    balanceDays: Number(p.balanceDays) || 0,
+    pin: p.pin || '',
+  };
+}
+
+export function formatGuardShiftForSheet(s: GuardShiftRecord) {
+  return {
+    id: s.id,
+    personnelId: s.personnelId,
+    personnelName: s.personnelName,
+    date: normalizeDateString(s.date),
+    endDate: s.endDate ? normalizeDateString(s.endDate) : '',
+    shiftType: s.shiftType,
+    notes: s.notes || '',
+    createdAt: s.createdAt || '',
+  };
+}
+
+// -------------------------------------------------------------
+// HELPER RESILIENTE PARA COMUNICACIÓN CON GOOGLE APPS SCRIPT
+// -------------------------------------------------------------
+
+export function isAbortOrTimeoutError(err: any): boolean {
+  if (!err) return false;
+  const name = String(err.name || '').toLowerCase();
+  const msg = String(err.message || err || '').toLowerCase();
+  return (
+    name === 'aborterror' ||
+    name === 'timeouterror' ||
+    msg.includes('aborted') ||
+    msg.includes('abort') ||
+    msg.includes('timeout')
+  );
+}
+
+export function formatNetworkErrorMessage(err: any, context = 'Google Sheets'): string {
+  if (isAbortOrTimeoutError(err)) {
+    return `Tiempo de espera agotado al comunicar con ${context}. Google Apps Script tardó en responder. Por favor reintente en unos segundos.`;
+  }
+  const str = String(err?.message || err || '');
+  if (str.includes('Failed to fetch') || str.includes('NetworkError') || str.includes('Load failed')) {
+    return `Error de conexión con ${context} (Failed to fetch). Verifique en Google Apps Script: "Desplegar" → "Quién tiene acceso" = "Cualquier persona (Anyone)" y haber guardado una "Nueva versión".`;
+  }
+  return `Error de conexión con ${context}: ${str}`;
+}
+
+export interface SafeFetchOptions {
+  timeoutMs?: number;
+  retries?: number;
+}
+
+export async function safeFetchAppsScript(
+  url: string,
+  payload: any,
+  options: SafeFetchOptions = {}
+): Promise<{ success: boolean; data?: any; message?: string; raw?: any }> {
+  const cleanUrl = (url || '').trim();
+  if (!cleanUrl || !cleanUrl.startsWith('http')) {
+    return {
+      success: false,
+      message: 'URL de Google Apps Script no configurada o no válida.',
+    };
+  }
+
+  const timeoutMs = options.timeoutMs ?? 45000;
+  const maxRetries = options.retries ?? 1;
+
+  let lastError: any = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    let isTimedOut = false;
+    const timeoutId = setTimeout(() => {
+      isTimedOut = true;
+      try {
+        controller.abort(new DOMException('Tiempo de espera agotado al comunicar con Google Sheets', 'TimeoutError'));
+      } catch {
+        controller.abort();
+      }
+    }, timeoutMs);
+
+    try {
+      const response = await fetch(cleanUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8',
+        },
+        body: typeof payload === 'string' ? payload : JSON.stringify(payload),
+        redirect: 'follow',
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      const text = await response.text();
+      let json: any;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        if (text.includes('Google Drive') || text.includes('script.google.com')) {
+          throw new Error('Respuesta de Google no válida (posible error de permisos o despliegue en Google Apps Script).');
+        }
+        throw new Error(`Respuesta no JSON recibida del servidor: ${text.substring(0, 150)}`);
+      }
+
+      return {
+        success: json.success !== false,
+        data: json.data || json,
+        message: json.message,
+        raw: json,
+      };
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      lastError = isTimedOut
+        ? new DOMException('Tiempo de espera agotado al comunicar con Google Sheets', 'TimeoutError')
+        : err;
+
+      if (attempt < maxRetries) {
+        console.warn(`[safeFetchAppsScript] Intento ${attempt + 1} falló (${err?.message || err}), reintentando en 1.5s...`);
+        await new Promise((res) => setTimeout(res, 1500));
+        continue;
+      }
+    }
+  }
+
+  // Fallback GET si es readAllData y falló POST
+  if (payload?.action === 'readAllData') {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+      try {
+        controller.abort(new DOMException('Tiempo de espera agotado en fallback GET', 'TimeoutError'));
+      } catch {
+        controller.abort();
+      }
+    }, 35000);
+
+    try {
+      const getUrl = cleanUrl + (cleanUrl.includes('?') ? '&' : '?') + 'action=readAllData&_t=' + Date.now();
+      const response = await fetch(getUrl, {
+        method: 'GET',
+        mode: 'cors',
+        redirect: 'follow',
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      const json = await response.json();
+      return {
+        success: json.success !== false,
+        data: json.data || json,
+        message: json.message,
+        raw: json,
+      };
+    } catch (fallbackErr: any) {
+      clearTimeout(timeoutId);
+      lastError = fallbackErr;
+    }
+  }
+
+  const errorMessage = formatNetworkErrorMessage(lastError);
+  return {
+    success: false,
+    message: errorMessage,
+  };
+}
+
+// Google Apps Script API Services - Sincronización de Base de Datos Central (Multi-dispositivo)
+export async function fetchRemoteSheetData(url: string): Promise<{
+  success: boolean;
+  data?: {
+    materials: MaterialSignal[];
+    personnel: Personnel[];
+    guardShifts: GuardShiftRecord[];
+    monthlyArchives: MonthlyArchiveLog[];
+  };
+  message: string;
+}> {
+  const result = await safeFetchAppsScript(
+    url,
+    { action: 'readAllData' },
+    { timeoutMs: 45000, retries: 1 }
+  );
+
+  if (!result.success || !result.data) {
+    return {
+      success: false,
+      message: result.message || 'Error al conectar con Google Sheets.',
+    };
+  }
+
+  const json = result.raw || result.data;
+
+  try {
+    if (!json || !json.data) {
+      return {
+        success: false,
+        message: json?.message || 'Respuesta inválida desde Google Sheets.',
+      };
+    }
+
+    const rawMats = Array.isArray(json.data.materials) ? json.data.materials : [];
+    const materials: MaterialSignal[] = deduplicateMaterials(
+      rawMats.map((m: any) => sanitizeMaterialSignal(m))
+    );
+
+    const rawPersonnel = Array.isArray(json.data.personnel) ? json.data.personnel : [];
+    const personnel: Personnel[] = deduplicatePersonnel(
+      rawPersonnel.map((p: any) => ({
+        id: String(p.id || `per-${Math.random().toString(36).substring(2, 8)}`),
+        name: String(p.name || 'Personal'),
+        role: (p.role || 'Documentalista') as any,
+        division: (p.division || 'Prensa') as any,
+        guardDaysWorked: Number(p.guardDaysWorked) || 0,
+        daysOffGenerated: Number(p.daysOffGenerated) || 0,
+        daysOffTaken: Number(p.daysOffTaken) || 0,
+        balanceDays: Number(p.balanceDays) || 0,
+        pin: p.pin ? String(p.pin) : undefined,
+      }))
+    );
+
+    const rawShifts = Array.isArray(json.data.guardShifts) ? json.data.guardShifts : [];
+    const guardShifts: GuardShiftRecord[] = deduplicateGuardShifts(
+      rawShifts.map((s: any) => ({
+        id: String(s.id || `sh-${Date.now()}`),
+        personnelId: String(s.personnelId || ''),
+        personnelName: String(s.personnelName || ''),
+        date: normalizeDateString(s.date),
+        endDate: s.endDate ? normalizeDateString(s.endDate) : undefined,
+        shiftType: (s.shiftType || 'Guardia (Fin de semana/Feriado)') as any,
+        notes: s.notes || undefined,
+        createdAt: s.createdAt ? getFormattedDateTime(s.createdAt) : undefined,
+      }))
+    );
+
+    const rawArchives = Array.isArray(json.data.monthlyArchives) ? json.data.monthlyArchives : [];
+    const monthlyArchives: MonthlyArchiveLog[] = rawArchives.map((a: any) => ({
+      id: String(a.id || `MAR-${Date.now()}`),
+      monthPeriod: String(a.monthPeriod || ''),
+      exportDate: getFormattedDateTime(a.exportDate),
+      exportedBy: String(a.exportedBy || ''),
+      exporterRole: String(a.exporterRole || ''),
+      materialsCount: Number(a.materialsCount) || 0,
+      formattedDuration: String(a.formattedDuration || '00:00:00'),
+      totalDurationSeconds: Number(a.totalDurationSeconds) || 0,
+      exportedItems: Array.isArray(a.exportedItems) ? a.exportedItems : [],
+    }));
+
+    return {
+      success: true,
+      data: {
+        materials,
+        personnel,
+        guardShifts,
+        monthlyArchives,
+      },
+      message: `Sincronizados ${materials.length} materiales, ${personnel.length} personal y ${guardShifts.length} turnos desde Google Sheets.`,
+    };
+  } catch (err: any) {
+    console.error('Error procesando respuesta de Google Sheets:', err);
+    return {
+      success: false,
+      message: `Error al procesar datos de Google Sheets: ${err.message || err.toString()}`,
+    };
+  }
+}
+
+/**
+ * Función Genérica para Ejecutar Acciones Atómicas en Google Apps Script
+ */
+export async function apiSendAction(
+  url: string,
+  payload: any,
+  options?: { timeoutMs?: number; retries?: number }
+): Promise<{ success: boolean; message?: string; data?: any; counts?: any }> {
+  const result = await safeFetchAppsScript(url, payload, { timeoutMs: options?.timeoutMs || 35000, retries: options?.retries !== undefined ? options.retries : 1 });
+  if (!result.success) {
+    return {
+      success: false,
+      message: result.message || 'Error al ejecutar acción en Google Sheets.',
+    };
+  }
+  return result.raw || { success: true, ...result };
+}
+
+// -------------------------------------------------------------
+// OPERACIONES ATÓMICAS (RPC) EN TIEMPO REAL CON GOOGLE SHEETS
+// -------------------------------------------------------------
+
+// 1. Acciones Atómicas sobre Materiales
+export async function apiCreateMaterialsBatch(url: string, materials: MaterialSignal[]) {
+  return apiSendAction(url, {
+    action: 'createMaterials',
+    materials: materials.map(formatMaterialForSheet),
+  });
+}
+
+export async function apiUpdateMaterial(url: string, materialId: string, updates?: Partial<MaterialSignal>, fullMaterial?: MaterialSignal) {
+  return apiSendAction(url, {
+    action: 'updateMaterial',
+    id: materialId,
+    updates: updates,
+    material: fullMaterial ? formatMaterialForSheet(fullMaterial) : undefined,
+  });
+}
+
+export async function apiBatchUpdateFamily(url: string, familyId: string, updates: Partial<MaterialSignal>) {
+  return apiSendAction(url, {
+    action: 'batchUpdateFamily',
+    familyId: familyId,
+    updates: updates,
+  });
+}
+
+export async function apiDeleteMaterial(url: string, materialId: string) {
+  return apiSendAction(url, {
+    action: 'deleteMaterial',
+    id: materialId,
+  });
+}
+
+export async function apiPurgeFinalizedMaterials(url: string, signalIds: string[], monthlyLog?: MonthlyArchiveLog) {
+  return apiSendAction(url, {
+    action: 'purgeFinalizedMaterials',
+    signalIds: signalIds,
+    monthlyLog: monthlyLog,
+  });
+}
+
+export async function apiCleanAndDeduplicateSheet(url: string) {
+  return apiSendAction(url, {
+    action: 'cleanAndDeduplicateSheet',
+  });
+}
+
+export async function apiReorganizeAllSheets(url: string) {
+  return apiSendAction(url, {
+    action: 'reorganizeAllSheets',
+  }, { timeoutMs: 60000, retries: 1 });
+}
+
+// 2. Acciones Atómicas sobre Personal
+export async function apiSavePersonnel(url: string, person: Personnel) {
+  return apiSendAction(url, {
+    action: 'savePersonnel',
+    personnel: formatPersonnelForSheet(person),
+  });
+}
+
+export async function apiUpdatePersonnel(url: string, personId: string, updates?: Partial<Personnel>, fullPerson?: Personnel) {
+  return apiSendAction(url, {
+    action: 'updatePersonnel',
+    id: personId,
+    updates: updates,
+    person: fullPerson ? formatPersonnelForSheet(fullPerson) : undefined,
+  });
+}
+
+export async function apiDeletePersonnel(url: string, personId: string) {
+  return apiSendAction(url, {
+    action: 'deletePersonnel',
+    id: personId,
+  });
+}
+
+// 3. Acciones Atómicas sobre Guardias
+export async function apiSaveBatchGuardShifts(url: string, shifts: GuardShiftRecord[], replaceTargetDate?: string) {
+  return apiSendAction(url, {
+    action: 'saveBatchGuardShifts',
+    shifts: shifts.map(formatGuardShiftForSheet),
+    replaceTargetDate: replaceTargetDate,
+  });
+}
+
+export async function apiDeleteGuardShift(url: string, shiftId: string) {
+  return apiSendAction(url, {
+    action: 'deleteGuardShift',
+    id: shiftId,
+  });
+}
+
+export async function apiClearAllGuardShifts(url: string) {
+  return apiSendAction(url, {
+    action: 'clearAllGuardShifts',
+  });
+}
+
+// 4. Acciones Atómicas sobre Cierres e Historial Mensual
+export async function apiSaveMonthlyArchive(url: string, archive: MonthlyArchiveLog) {
+  return apiSendAction(url, {
+    action: 'saveMonthlyArchive',
+    archive: archive,
+  });
+}
+
+export async function apiClearMonthlyArchives(url: string) {
+  return apiSendAction(url, {
+    action: 'clearMonthlyArchives',
+  });
+}
+
+export async function pushAllDataToRemoteSheet(
+  url: string,
+  data: {
+    materials: MaterialSignal[];
+    personnel: Personnel[];
+    guardShifts: GuardShiftRecord[];
+    monthlyArchives?: MonthlyArchiveLog[];
+  }
+): Promise<{ success: boolean; message: string; counts?: any }> {
+  if (!url || !url.startsWith('http')) {
+    return {
+      success: false,
+      message: 'URL de Google Apps Script no configurada.',
+    };
+  }
+
+  try {
+    const formattedMaterials = data.materials.map(formatMaterialForSheet);
+
+    const formattedPersonnel = (data.personnel || []).map((p) => ({
+      id: p.id,
+      name: p.name,
+      role: p.role,
+      division: p.division,
+      guardDaysWorked: p.guardDaysWorked || 0,
+      daysOffGenerated: p.daysOffGenerated || 0,
+      daysOffTaken: p.daysOffTaken || 0,
+      balanceDays: p.balanceDays || 0,
+      pin: p.pin || '',
+    }));
+
+    const formattedShifts = (data.guardShifts || []).map((s) => ({
+      id: s.id,
+      personnelId: s.personnelId,
+      personnelName: s.personnelName,
+      date: normalizeDateString(s.date),
+      endDate: s.endDate ? normalizeDateString(s.endDate) : '',
+      shiftType: s.shiftType,
+      notes: s.notes || '',
+      createdAt: s.createdAt || '',
+    }));
+
+    const formattedArchives = (data.monthlyArchives || []).map((a) => ({
+      id: a.id,
+      monthPeriod: a.monthPeriod,
+      exportDate: a.exportDate,
+      exportedBy: a.exportedBy,
+      exporterRole: a.exporterRole,
+      materialsCount: a.materialsCount || 0,
+      formattedDuration: a.formattedDuration || '00:00:00',
+      totalDurationSeconds: a.totalDurationSeconds || 0,
+    }));
+
+    const payload = {
+      action: 'syncAllData',
+      materials: formattedMaterials,
+      personnel: formattedPersonnel,
+      guardShifts: formattedShifts,
+      monthlyArchives: formattedArchives,
+    };
+
+    const result = await safeFetchAppsScript(url, payload, { timeoutMs: 60000, retries: 1 });
+    if (result.success) {
+      return {
+        success: true,
+        message: result.message || 'Datos guardados correctamente en Google Sheets.',
+        counts: result.raw?.counts,
+      };
+    } else {
+      return {
+        success: false,
+        message: result.message || 'Error al guardar datos en Google Sheets.',
+      };
+    }
+  } catch (err: any) {
+    console.error('Error pushing data to Google Sheets:', err);
+    return {
+      success: false,
+      message: formatNetworkErrorMessage(err, 'Google Sheets'),
+    };
+  }
+}
+
+/**
+ * Sincronización inteligente bidireccional entre el dispositivo local y Google Sheets
+ */
+export async function smartSyncWithSheet(
+  url: string,
+  localState: {
+    materials: MaterialSignal[];
+    personnel: Personnel[];
+    guardShifts: GuardShiftRecord[];
+    monthlyArchives?: MonthlyArchiveLog[];
+  }
+): Promise<{
+  success: boolean;
+  data?: {
+    materials: MaterialSignal[];
+    personnel: Personnel[];
+    guardShifts: GuardShiftRecord[];
+    monthlyArchives: MonthlyArchiveLog[];
+  };
+  message: string;
+}> {
+  if (!url || !url.startsWith('http')) {
+    return {
+      success: false,
+      message: 'No hay URL de Google Apps Script configurada para sincronizar.',
+    };
+  }
+
+  // 1. Obtener los datos más recientes desde Google Sheets
+  const remoteRes = await fetchRemoteSheetData(url);
+  if (!remoteRes.success || !remoteRes.data) {
+    return {
+      success: false,
+      message: remoteRes.message,
+    };
+  }
+
+  const remote = remoteRes.data;
+
+  // 2. Fusión inteligente de materiales (conserva locales no sincronizados y actualiza remotos)
+  const { merged: mergedMaterials, hasLocalUnsynced: hasUnsyncedMats } = mergeMaterials(
+    localState.materials || [],
+    remote.materials || []
+  );
+
+  // 3. Fusión inteligente de guardias
+  const { merged: mergedShifts, hasLocalUnsynced: hasUnsyncedShifts } = mergeGuardShifts(
+    localState.guardShifts || [],
+    remote.guardShifts || []
+  );
+
+  // 4. Fusión de personal (toma los de remoto si existen, o locales si tienen más datos)
+  const personnelMap = new Map<string, Personnel>();
+  (remote.personnel && remote.personnel.length > 0 ? remote.personnel : localState.personnel || []).forEach((p) => {
+    if (p && (p.id || p.name)) {
+      personnelMap.set(p.id || p.name, p);
+    }
+  });
+  // Agregar cualquier personal local no registrado en remoto
+  (localState.personnel || []).forEach((lp) => {
+    const key = lp.id || lp.name;
+    if (key && !personnelMap.has(key)) {
+      personnelMap.set(key, lp);
+    }
+  });
+  const mergedPersonnel = deduplicatePersonnel(Array.from(personnelMap.values()));
+
+  // 5. Fusión de cierres mensuales
+  const archiveMap = new Map<string, MonthlyArchiveLog>();
+  (remote.monthlyArchives || []).forEach((a) => {
+    if (a && a.id) archiveMap.set(a.id, a);
+  });
+  (localState.monthlyArchives || []).forEach((la) => {
+    if (la && la.id && !archiveMap.has(la.id)) {
+      archiveMap.set(la.id, la);
+    }
+  });
+  const mergedArchives = Array.from(archiveMap.values());
+
+  const mergedState = {
+    materials: mergedMaterials,
+    personnel: mergedPersonnel,
+    guardShifts: mergedShifts,
+    monthlyArchives: mergedArchives,
+  };
+
+  // 6. Guardar estado consolidado en almacenamiento local seguro
+  saveLocalMaterials(mergedState.materials);
+  saveLocalPersonnel(mergedState.personnel);
+  saveLocalGuardShifts(mergedState.guardShifts);
+  saveLocalMonthlyArchives(mergedState.monthlyArchives);
+
+  // 7. Si habían datos locales que no estaban en Google Sheets, o si la hoja remota estaba vacía, subir la versión fusionada a Google Sheets
+  const needsPush = hasUnsyncedMats || hasUnsyncedShifts || remote.materials.length === 0;
+  if (needsPush) {
+    // Subir en segundo plano para consolidar Google Sheets
+    pushAllDataToRemoteSheet(url, mergedState).catch((err) => {
+      console.warn('Advertencia al enviar estado consolidado a Google Sheets:', err);
+    });
+  }
+
+  return {
+    success: true,
+    data: mergedState,
+    message: `Base de datos sincronizada: ${mergedMaterials.length} materiales, ${mergedPersonnel.length} personal, ${mergedShifts.length} guardias.`,
+  };
+}
+
+// Google Apps Script API Services - Respaldos Diarios y Mensuales en Google Drive
+export async function createDailyBackupInDrive(
+  url: string,
+  dateStr: string,
+  materials: MaterialSignal[],
+  userName: string = 'Operador VTV'
+): Promise<{ success: boolean; message: string; sheetName?: string }> {
+  if (!url || !url.startsWith('http')) {
+    return { 
+      success: false, 
+      message: 'URL de Google Apps Script no configurada. Configure la URL en el módulo correspondiente para enviar a Google Drive.' 
+    };
+  }
+
+  try {
+    const formattedMaterials = materials.map(formatMaterialForSheet);
+
+    const payload = {
+      action: 'createDailyBackupSheet',
+      date: dateStr,
+      materials: formattedMaterials,
+      user: userName,
+    };
+
+    const result = await safeFetchAppsScript(url, payload, { timeoutMs: 60000, retries: 1 });
+    if (result.success) {
+      return {
+        success: true,
+        message: result.message || 'Hoja de respaldo diario creada exitosamente en Google Drive.',
+        sheetName: result.raw?.sheetName,
+      };
+    } else {
+      return {
+        success: false,
+        message: result.message || 'Error al crear la hoja en Google Drive.',
+      };
+    }
+  } catch (err: any) {
+    console.error('Error creating daily backup sheet:', err);
+    return { success: false, message: formatNetworkErrorMessage(err, 'Google Drive') };
+  }
+}
+
+export async function createMonthlyBackupInDrive(
+  url: string,
+  monthPeriod: string,
+  materials: MaterialSignal[],
+  summary: {
+    totalCount: number;
+    formattedDuration: string;
+    prensaCount: number;
+    programacionCount: number;
+    ingestaCount: number;
+    finalizedCount: number;
+  },
+  userName: string = 'Gerencia de Archivo'
+): Promise<{ success: boolean; message: string; sheetName?: string }> {
+  if (!url || !url.startsWith('http')) {
+    return { 
+      success: false, 
+      message: 'URL de Google Apps Script no configurada. Configure la URL en el módulo correspondiente para enviar a Google Drive.' 
+    };
+  }
+
+  try {
+    const formattedMaterials = materials.map(formatMaterialForSheet);
+
+    const payload = {
+      action: 'createMonthlyBackupSheet',
+      monthPeriod,
+      materials: formattedMaterials,
+      summary,
+      user: userName,
+    };
+
+    const result = await safeFetchAppsScript(url, payload, { timeoutMs: 60000, retries: 1 });
+    if (result.success) {
+      return {
+        success: true,
+        message: result.message || 'Hoja de respaldo mensual creada exitosamente en Google Drive.',
+        sheetName: result.raw?.sheetName,
+      };
+    } else {
+      return {
+        success: false,
+        message: result.message || 'Error al crear la hoja mensual en Google Drive.',
+      };
+    }
+  } catch (err: any) {
+    console.error('Error creating monthly backup sheet:', err);
+    return { success: false, message: formatNetworkErrorMessage(err, 'Google Drive') };
+  }
+}
+
+// Client-side CSV Exporters with Full Metadata
+export function exportDailyBackupToCSV(dateStr: string, materials: MaterialSignal[]): void {
+  const headers = [
+    'ID Material',
+    'ID Familia',
+    'Tipo de Señal',
+    'Título / Descripción',
+    'División',
+    'Duración',
+    'Fecha Creación',
+    'Creado Por',
+    'Rol Creador',
+    'Estado',
+    'Es Solicitud / Tarea',
+    'Asignado A',
+    'Rol Asignado',
+    'Fecha Asignación',
+    'Ingestado',
+    'Ingestado Por',
+    'Catalogado',
+    'Catalogado Por',
+    'Fecha Catalogación',
+    'Finalizado',
+    'Finalizado Por',
+    'Fecha Finalizado',
+    'Notas / Observaciones'
+  ];
+
+  const escapeCSV = (val: any) => {
+    if (val === null || val === undefined) return '""';
+    const str = String(val).replace(/"/g, '""');
+    return `"${str}"`;
+  };
+
+  const rows = materials.map((m) => {
+    let assignedStr = 'Sin asignar';
+    if (m.assignedPersons && m.assignedPersons.length > 0) {
+      assignedStr = m.assignedPersons.join(', ');
+    } else if (m.assignedTo) {
+      assignedStr = m.assignedTo;
+    }
+
+    return [
+      escapeCSV(m.id),
+      escapeCSV(m.familyId || m.id),
+      escapeCSV(m.signalType),
+      escapeCSV(m.title),
+      escapeCSV(m.division),
+      escapeCSV(formatDurationHHMMSS(m.duration)),
+      escapeCSV(m.creationDate),
+      escapeCSV(m.createdBy),
+      escapeCSV(m.creatorRole || m.createdByRole || ''),
+      escapeCSV(m.status),
+      escapeCSV(m.isRequestTask ? 'SI' : 'NO'),
+      escapeCSV(assignedStr),
+      escapeCSV(m.assignedToRole || ''),
+      escapeCSV(m.assignedAt || ''),
+      escapeCSV(m.isIngested !== false ? 'SI' : 'NO'),
+      escapeCSV(m.ingestedBy || ''),
+      escapeCSV(m.isCataloged ? 'SI' : 'NO'),
+      escapeCSV(m.catalogedBy || 'N/A'),
+      escapeCSV(m.catalogedAt || 'N/A'),
+      escapeCSV(m.isFinalized ? 'SI' : 'NO'),
+      escapeCSV(m.finalizedBy || 'N/A'),
+      escapeCSV(m.finalizedAt || 'N/A'),
+      escapeCSV(m.notes || ''),
+    ].join(';');
+  });
+
+  const csvContent = '\uFEFF' + [headers.join(';'), ...rows].join('\r\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  const cleanDate = dateStr.replace(/[\/-]/g, '_');
+  link.setAttribute('href', url);
+  link.setAttribute('download', `VTV_Respaldo_Diario_${cleanDate}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+export function exportMonthlyBackupToCSV(
+  monthPeriod: string,
+  materials: MaterialSignal[],
+  summary: { totalCount: number; formattedDuration: string }
+): void {
+  const headers = [
+    'ID Material',
+    'ID Familia',
+    'Tipo de Señal',
+    'Título / Descripción',
+    'División',
+    'Duración',
+    'Fecha Creación',
+    'Creado Por',
+    'Rol Creador',
+    'Estado',
+    'Es Solicitud / Tarea',
+    'Asignado A',
+    'Rol Asignado',
+    'Fecha Asignación',
+    'Ingestado',
+    'Ingestado Por',
+    'Catalogado',
+    'Catalogado Por',
+    'Fecha Catalogación',
+    'Finalizado',
+    'Finalizado Por',
+    'Fecha Finalizado',
+    'Notas / Observaciones'
+  ];
+
+  const escapeCSV = (val: any) => {
+    if (val === null || val === undefined) return '""';
+    const str = String(val).replace(/"/g, '""');
+    return `"${str}"`;
+  };
+
+  const rows = materials.map((m) => {
+    let assignedStr = 'Sin asignar';
+    if (m.assignedPersons && m.assignedPersons.length > 0) {
+      assignedStr = m.assignedPersons.join(', ');
+    } else if (m.assignedTo) {
+      assignedStr = m.assignedTo;
+    }
+
+    return [
+      escapeCSV(m.id),
+      escapeCSV(m.familyId || m.id),
+      escapeCSV(m.signalType),
+      escapeCSV(m.title),
+      escapeCSV(m.division),
+      escapeCSV(formatDurationHHMMSS(m.duration)),
+      escapeCSV(m.creationDate),
+      escapeCSV(m.createdBy),
+      escapeCSV(m.creatorRole || m.createdByRole || ''),
+      escapeCSV(m.status),
+      escapeCSV(m.isRequestTask ? 'SI' : 'NO'),
+      escapeCSV(assignedStr),
+      escapeCSV(m.assignedToRole || ''),
+      escapeCSV(m.assignedAt || ''),
+      escapeCSV(m.isIngested !== false ? 'SI' : 'NO'),
+      escapeCSV(m.ingestedBy || ''),
+      escapeCSV(m.isCataloged ? 'SI' : 'NO'),
+      escapeCSV(m.catalogedBy || 'N/A'),
+      escapeCSV(m.catalogedAt || 'N/A'),
+      escapeCSV(m.isFinalized ? 'SI' : 'NO'),
+      escapeCSV(m.finalizedBy || 'N/A'),
+      escapeCSV(m.finalizedAt || 'N/A'),
+      escapeCSV(m.notes || ''),
+    ].join(';');
+  });
+
+  const summaryHeader = `Respaldo Mensual: ${monthPeriod};Total Materiales: ${summary.totalCount};Duración Total: ${summary.formattedDuration}\r\n`;
+  const csvContent = '\uFEFF' + summaryHeader + [headers.join(';'), ...rows].join('\r\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  const cleanMonth = monthPeriod.replace(/[\/\s-]/g, '_');
+  link.setAttribute('href', url);
+  link.setAttribute('download', `VTV_Respaldo_Mensual_${cleanMonth}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
