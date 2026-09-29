@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Personnel, GuardShiftRecord, ShiftType, DivisionType, UserProfile } from '../types';
+import { Personnel, GuardShiftRecord, ShiftType, DivisionType, UserProfile, normalizeDivision } from '../types';
 import { canUserManagePersonnel, canUserAssignVacations } from '../utils/permissions';
 import { 
   Calendar as CalendarIcon, 
@@ -103,7 +103,7 @@ export const AdminPersonnelModule: React.FC<AdminPersonnelModuleProps> = ({
   const [isAddingPersonnel, setIsAddingPersonnel] = useState(false);
   const [newPersonName, setNewPersonName] = useState('');
   const [newPersonRole, setNewPersonRole] = useState<Personnel['role']>('Coordinador');
-  const [newPersonDivision, setNewPersonDivision] = useState<DivisionType>('Prensa');
+  const [newPersonDivision, setNewPersonDivision] = useState<DivisionType>('Archivo de Prensa');
   const [newPersonPin, setNewPersonPin] = useState('');
 
   // Feedback Toast
@@ -120,7 +120,8 @@ export const AdminPersonnelModule: React.FC<AdminPersonnelModuleProps> = ({
   const filteredPanelPersonnel = useMemo(() => {
     return personnel.filter((p) => {
       const matchesDivision =
-        panelDivisionFilter === 'all' || p.division === panelDivisionFilter;
+        panelDivisionFilter === 'all' ||
+        normalizeDivision(p.division) === normalizeDivision(panelDivisionFilter);
       const matchesSearch =
         !panelSearchQuery.trim() ||
         p.name.toLowerCase().includes(panelSearchQuery.toLowerCase().trim()) ||
@@ -144,7 +145,7 @@ export const AdminPersonnelModule: React.FC<AdminPersonnelModuleProps> = ({
 
   // Grouped personnel by division for Assignment Modal
   const groupedPersonnelForAssign = useMemo<Record<string, Personnel[]>>(() => {
-    const knownDivisions: DivisionType[] = ['Prensa', 'Programación', 'Ingesta', 'Gerencia'];
+    const knownDivisions: DivisionType[] = ['Archivo de Prensa', 'Archivo de Programación', 'Ingesta', 'Gerencia'];
     const groups: Record<string, Personnel[]> = {};
 
     knownDivisions.forEach((div) => {
@@ -152,7 +153,7 @@ export const AdminPersonnelModule: React.FC<AdminPersonnelModuleProps> = ({
     });
 
     filteredPersonnelForAssign.forEach((p) => {
-      const divKey = p.division || 'Gerencia';
+      const divKey = normalizeDivision(p.division);
       if (!groups[divKey]) groups[divKey] = [];
       groups[divKey].push(p);
     });
@@ -318,7 +319,8 @@ export const AdminPersonnelModule: React.FC<AdminPersonnelModuleProps> = ({
     const guardShiftsOnDate = shiftsOnDate.filter((s) => s.shiftType === 'Guardia (Fin de semana/Feriado)');
     const vacationShiftsOnDate = shiftsOnDate.filter((s) => s.shiftType === 'Vacaciones');
 
-    const dateObj = new Date(dateStr + 'T00:00:00');
+    const parts = dateStr.split('-').map(Number);
+    const dateObj = parts.length === 3 ? new Date(parts[0], parts[1] - 1, parts[2], 12, 0, 0) : new Date();
     const dateFormatted = !isNaN(dateObj.getTime())
       ? dateObj.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
       : dateStr;
@@ -707,8 +709,8 @@ export const AdminPersonnelModule: React.FC<AdminPersonnelModuleProps> = ({
           <div className="flex items-center gap-2 overflow-x-auto pb-2.5 mb-4 no-scrollbar border-b border-slate-800/80">
             {[
               { id: 'all', label: 'Todas las Divisiones' },
-              { id: 'Prensa', label: 'Prensa' },
-              { id: 'Programación', label: 'Programación' },
+              { id: 'Archivo de Prensa', label: 'Archivo de Prensa' },
+              { id: 'Archivo de Programación', label: 'Archivo de Programación' },
               { id: 'Ingesta', label: 'Ingesta' },
               { id: 'Gerencia', label: 'Gerencia' },
             ].map((tab) => (
@@ -1341,10 +1343,10 @@ export const AdminPersonnelModule: React.FC<AdminPersonnelModuleProps> = ({
                     onChange={(e) => setNewPersonDivision(e.target.value as any)}
                     className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm"
                   >
-                    <option value="Gerencia">Gerencia</option>
-                    <option value="Prensa">Prensa</option>
-                    <option value="Programación">Programación</option>
+                    <option value="Archivo de Prensa">Archivo de Prensa</option>
+                    <option value="Archivo de Programación">Archivo de Programación</option>
                     <option value="Ingesta">Ingesta</option>
+                    <option value="Gerencia">Gerencia</option>
                   </select>
                 </div>
               </div>

@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { MaterialSignal, DivisionType } from '../types';
+import { MaterialSignal, DivisionType, normalizeDivision } from '../types';
 import { groupMaterialsByFamily, durationToSeconds, formatHoursVerbose, parseAnyDate, isValidPersonName } from '../services/apiService';
 import { isBlockedUserName } from '../data/initialData';
 import { 
@@ -75,7 +75,7 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({ materials }) =
   // Base filtered materials by division
   const divisionFilteredMaterials = useMemo(() => {
     if (filterDivision === 'Todas') return materials;
-    return materials.filter((m) => m.division === filterDivision);
+    return materials.filter((m) => normalizeDivision(m.division) === normalizeDivision(filterDivision));
   }, [materials, filterDivision]);
 
   // Filter materials based on selected Period
@@ -142,10 +142,15 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({ materials }) =
 
   // Division Metrics Data for Bar Chart
   const divisionData = useMemo(() => {
-    const divisions: DivisionType[] = ['Prensa', 'Programación', 'Ingesta'];
+    const divisions: ('Archivo de Prensa' | 'Archivo de Programación' | 'Ingesta' | 'Gerencia')[] = [
+      'Archivo de Prensa',
+      'Archivo de Programación',
+      'Ingesta',
+      'Gerencia'
+    ];
 
     return divisions.map((div) => {
-      const divMats = periodFilteredMaterials.filter((m) => m.division === div);
+      const divMats = periodFilteredMaterials.filter((m) => normalizeDivision(m.division) === div);
       const divFamilies = groupMaterialsByFamily(divMats);
       const divSecs = divMats.reduce((acc, m) => acc + durationToSeconds(m.duration), 0);
       const divHours = +(divSecs / 3600).toFixed(2);
@@ -478,9 +483,10 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({ materials }) =
             className="px-3 py-2 bg-slate-950 border border-slate-800 text-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-emerald-500"
           >
             <option value="Todas">Todas las Divisiones</option>
-            <option value="Prensa">División 1: Prensa</option>
-            <option value="Programación">División 2: Programación</option>
-            <option value="Ingesta">División 3: Ingesta</option>
+            <option value="Archivo de Prensa">Archivo de Prensa</option>
+            <option value="Archivo de Programación">Archivo de Programación</option>
+            <option value="Ingesta">Ingesta</option>
+            <option value="Gerencia">Gerencia</option>
           </select>
 
           {/* Period Toggle */}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { MaterialSignal, DivisionType, SignalType, MaterialStatus } from '../types';
+import { MaterialSignal, DivisionType, SignalType, MaterialStatus, normalizeDivision } from '../types';
 import { X, Edit3, Save, Clock, Ban, Info, Sparkles, Trash2 } from 'lucide-react';
 import { formatDurationHHMMSS, durationToSeconds } from '../services/apiService';
 
@@ -33,7 +33,7 @@ export const EditMaterialModal: React.FC<EditMaterialModalProps> = ({
   onDelete,
 }) => {
   const [title, setTitle] = useState('');
-  const [division, setDivision] = useState<DivisionType>('Prensa');
+  const [division, setDivision] = useState<DivisionType>('Archivo de Prensa');
   const [signalPreset, setSignalPreset] = useState<string>('Limpio');
   const [customSignalName, setCustomSignalName] = useState<string>('');
   const [status, setStatus] = useState<MaterialStatus>('Registrado');
@@ -47,7 +47,7 @@ export const EditMaterialModal: React.FC<EditMaterialModalProps> = ({
     setIsConfirmingDelete(false);
     if (signal) {
       setTitle(signal.title);
-      setDivision(signal.division);
+      setDivision(normalizeDivision(signal.division));
       setStatus(signal.status || (signal.isDiscarded ? 'Descartado' : 'Registrado'));
       setNotes(signal.notes || '');
 
@@ -156,9 +156,10 @@ export const EditMaterialModal: React.FC<EditMaterialModalProps> = ({
                 onChange={(e) => setDivision(e.target.value as DivisionType)}
                 className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-purple-500 text-xs font-bold"
               >
-                <option value="Prensa">Prensa</option>
-                <option value="Programación">Programación</option>
+                <option value="Archivo de Prensa">Archivo de Prensa</option>
+                <option value="Archivo de Programación">Archivo de Programación</option>
                 <option value="Ingesta">Ingesta</option>
+                <option value="Gerencia">Gerencia</option>
               </select>
             </div>
 

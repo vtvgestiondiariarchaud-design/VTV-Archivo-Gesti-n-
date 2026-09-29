@@ -1,5 +1,6 @@
-import { MaterialSignal, SignalType, Personnel, GuardShiftRecord, MaterialFamilyGroup, AppState, MaterialStatus, MonthlyArchiveLog, UserProfile, BackupSnapshot } from '../types';
+import { MaterialSignal, SignalType, Personnel, GuardShiftRecord, MaterialFamilyGroup, AppState, MaterialStatus, MonthlyArchiveLog, UserProfile, BackupSnapshot, normalizeDivision } from '../types';
 import { INITIAL_MATERIALS, INITIAL_PERSONNEL, INITIAL_GUARD_SHIFTS, DEFAULT_USERS, DEFAULT_APPS_SCRIPT_URL, GUEST_USER, isBlockedUserName } from '../data/initialData';
+import { logApiError, logSyncError, logParseError } from './errorLoggingService';
 
 const LOCAL_STORAGE_KEY_MATERIALS = 'vtv_archivo_materials_v1';
 const LOCAL_STORAGE_KEY_PERSONNEL = 'vtv_archivo_personnel_v1';
@@ -10,7 +11,27 @@ const LOCAL_STORAGE_KEY_PINS = 'vtv_archivo_user_pins_v1';
 const LOCAL_STORAGE_KEY_MONTHLY_ARCHIVES = 'vtv_archivo_monthly_archives_v1';
 export const LOCAL_STORAGE_KEY_BACKUP_SNAPSHOTS = 'vtv_archivo_backup_snapshots_v1';
 export const LOCAL_STORAGE_KEY_SESSION_START = 'vtv_archivo_session_start_v1';
+export const LOCAL_STORAGE_KEY_LAST_USED_USER = 'vtv_archivo_last_used_user_v1';
 export const SESSION_MAX_DURATION_MS = 60 * 60 * 1000; // 1 hora exacta (3,600,000 ms)
+
+export function saveLocalLastUsedUser(user: UserProfile): void {
+  try {
+    if (!user || user.isGuest || user.id === 'guest' || isBlockedUserName(user.name)) return;
+    localStorage.setItem(LOCAL_STORAGE_KEY_LAST_USED_USER, JSON.stringify(user));
+  } catch (e) {}
+}
+
+export function getLocalLastUsedUser(): UserProfile | null {
+  try {
+    const raw = localStorage.getItem(LOCAL_STORAGE_KEY_LAST_USED_USER);
+    if (!raw) return null;
+    const parsed: UserProfile = JSON.parse(raw);
+    if (!parsed || parsed.isGuest || parsed.id === 'guest' || isBlockedUserName(parsed.name)) return null;
+    return parsed;
+  } catch (e) {
+    return null;
+  }
+}
 
 export function saveLocalSessionStartTime(timestamp = Date.now()): void {
   try {
@@ -139,29 +160,55 @@ export function format12HourTime(h: number, m: number, includeSeconds = false, s
 
 export function normalizeDateString(val: any): string {
   if (!val) return '';
+
+  if (val instanceof Date) {
+    if (isNaN(val.getTime())) return '';
+    const h = val.getHours();
+    const d = new Date(val.getTime());
+    // Si la hora es tardía (>= 17:00, p. ej. 20:00 o 19:00 debido a conversión de medianoche UTC a zona GMT negativa):
+    if (h >= 17) {
+      d.setTime(d.getTime() + (24 - h + 2) * 3600 * 1000);
+    }
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
   const str = String(val).trim();
   if (!str) return '';
 
-  // 1. If string starts with YYYY-MM-DD
-  const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (isoMatch) {
-    return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
-  }
-
-  // 2. If DD/MM/YYYY or D/M/YYYY or DD-MM-YYYY
-  const dmyMatch = str.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/);
+  // 1. Si viene como DD/MM/YYYY o DD-MM-YYYY con posible hora (ej. "29/09/2026 20:00" o "30/09/2026")
+  const dmyMatch = str.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})(?:\s+(\d{1,2}):(\d{1,2}))?/);
   if (dmyMatch) {
-    const pad = (n: string) => n.padStart(2, '0');
-    return `${dmyMatch[3]}-${pad(dmyMatch[2])}-${pad(dmyMatch[1])}`;
+    let day = Number(dmyMatch[1]);
+    let month = Number(dmyMatch[2]);
+    let year = Number(dmyMatch[3]);
+    const hour = dmyMatch[4] !== undefined ? Number(dmyMatch[4]) : 0;
+    // Si tiene hora tardía (>= 17:00), es un desfase de medianoche UTC (ej. 00:00 UTC - 4h = 20:00 día anterior)
+    if (hour >= 17) {
+      const nextDate = new Date(year, month - 1, day + 1);
+      year = nextDate.getFullYear();
+      month = nextDate.getMonth() + 1;
+      day = nextDate.getDate();
+    }
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${year}-${pad(month)}-${pad(day)}`;
   }
 
-  // 3. Try parsing JS Date
-  const d = new Date(val);
-  if (!isNaN(d.getTime())) {
-    const year = d.getFullYear();
-    if (year >= 2000) {
-      return getLocalDateISOString(d);
+  // 2. Si viene como YYYY-MM-DD con posible hora (ej. "2026-09-29T20:00:00" o "2026-09-30")
+  const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{1,2}):(\d{1,2}))?/);
+  if (isoMatch) {
+    let year = Number(isoMatch[1]);
+    let month = Number(isoMatch[2]);
+    let day = Number(isoMatch[3]);
+    const hour = isoMatch[4] !== undefined ? Number(isoMatch[4]) : 0;
+    if (hour >= 17) {
+      const nextDate = new Date(year, month - 1, day + 1);
+      year = nextDate.getFullYear();
+      month = nextDate.getMonth() + 1;
+      day = nextDate.getDate();
     }
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${year}-${pad(month)}-${pad(day)}`;
   }
 
   return str.substring(0, 10);
@@ -362,6 +409,7 @@ export function sanitizeMaterialSignal(mat: any): MaterialSignal {
     id: cleanId,
     familyId: cleanFamilyId,
     title,
+    division: normalizeDivision(mat.division),
     signalType: signalType as SignalType,
     status,
     isDiscarded,
@@ -805,6 +853,7 @@ export function loadInitialState(): AppState {
         const isCataloged = !isDiscarded && (m.isCataloged !== undefined ? Boolean(m.isCataloged) : (m.status === 'Por Archivar' || m.status === 'Finalizado'));
         return {
           ...m,
+          division: normalizeDivision(m.division),
           status,
           isDiscarded,
           isCataloged,
@@ -825,6 +874,7 @@ export function loadInitialState(): AppState {
         const isCataloged = !isDiscarded && (m.isCataloged !== undefined ? Boolean(m.isCataloged) : (m.status === 'Por Archivar' || m.status === 'Finalizado'));
         return {
           ...m,
+          division: normalizeDivision(m.division),
           status,
           isDiscarded,
           isCataloged,
@@ -842,7 +892,10 @@ export function loadInitialState(): AppState {
     if (localPer) {
       try {
         const parsed: Personnel[] = JSON.parse(localPer);
-        personnel = deduplicatePersonnel(parsed);
+        personnel = deduplicatePersonnel(parsed.map((p) => ({
+          ...p,
+          division: normalizeDivision(p.division),
+        })));
         if (personnel.length === 0) {
           personnel = deduplicatePersonnel(INITIAL_PERSONNEL);
         }
@@ -1122,6 +1175,9 @@ export function saveLocalAppsScriptUrl(url: string) {
 
 export function saveLocalActiveUser(user: any) {
   safeSetItem(LOCAL_STORAGE_KEY_USER, JSON.stringify(user));
+  if (user && !user.isGuest && user.id !== 'guest' && !isBlockedUserName(user.name)) {
+    saveLocalLastUsedUser(user);
+  }
 }
 
 export function loadLocalUserPins(): Record<string, string> {
@@ -1434,10 +1490,15 @@ export async function safeFetchAppsScript(
       try {
         json = JSON.parse(text);
       } catch {
-        if (text.includes('Google Drive') || text.includes('script.google.com')) {
-          throw new Error('Respuesta de Google no válida (posible error de permisos o despliegue en Google Apps Script).');
-        }
-        throw new Error(`Respuesta no JSON recibida del servidor: ${text.substring(0, 150)}`);
+        const parseErrMsg = (text.includes('Google Drive') || text.includes('script.google.com'))
+          ? 'Respuesta de Google no válida (posible error de permisos o despliegue en Google Apps Script).'
+          : `Respuesta no JSON recibida del servidor: ${text.substring(0, 150)}`;
+        logParseError(parseErrMsg, text, payload?.action || 'api_post');
+        throw new Error(parseErrMsg);
+      }
+
+      if (json.success === false) {
+        logApiError(payload?.action || 'api_post', new Error(json.message || 'Error reportado por Google Apps Script'), cleanUrl, { response: json });
       }
 
       return {
@@ -1494,6 +1555,13 @@ export async function safeFetchAppsScript(
   }
 
   const errorMessage = formatNetworkErrorMessage(lastError);
+  logApiError(
+    payload?.action || 'api_fetch',
+    lastError || new Error(errorMessage),
+    cleanUrl,
+    { payloadSummary: typeof payload === 'string' ? payload.slice(0, 200) : payload }
+  );
+
   return {
     success: false,
     message: errorMessage,
@@ -1518,9 +1586,11 @@ export async function fetchRemoteSheetData(url: string): Promise<{
   );
 
   if (!result.success || !result.data) {
+    const errorMsg = result.message || 'Error al conectar con Google Sheets.';
+    logSyncError(errorMsg, { result }, 'fetchRemoteSheetData');
     return {
       success: false,
-      message: result.message || 'Error al conectar con Google Sheets.',
+      message: errorMsg,
     };
   }
 
@@ -1545,7 +1615,7 @@ export async function fetchRemoteSheetData(url: string): Promise<{
         id: String(p.id || `per-${Math.random().toString(36).substring(2, 8)}`),
         name: String(p.name || 'Personal'),
         role: (p.role || 'Documentalista') as any,
-        division: (p.division || 'Prensa') as any,
+        division: normalizeDivision(p.division),
         guardDaysWorked: Number(p.guardDaysWorked) || 0,
         daysOffGenerated: Number(p.daysOffGenerated) || 0,
         daysOffTaken: Number(p.daysOffTaken) || 0,
@@ -1593,6 +1663,7 @@ export async function fetchRemoteSheetData(url: string): Promise<{
     };
   } catch (err: any) {
     console.error('Error procesando respuesta de Google Sheets:', err);
+    logSyncError(`Error al procesar datos de Google Sheets: ${err?.message || err}`, err, 'fetchRemoteSheetData_process');
     return {
       success: false,
       message: `Error al procesar datos de Google Sheets: ${err.message || err.toString()}`,
@@ -1610,6 +1681,7 @@ export async function apiSendAction(
 ): Promise<{ success: boolean; message?: string; data?: any; counts?: any }> {
   const result = await safeFetchAppsScript(url, payload, { timeoutMs: options?.timeoutMs || 35000, retries: options?.retries !== undefined ? options.retries : 1 });
   if (!result.success) {
+    logApiError(payload?.action || 'atomic_action', new Error(result.message || 'Fallo en ejecución de acción en Google Apps Script'), url, { payload });
     return {
       success: false,
       message: result.message || 'Error al ejecutar acción en Google Sheets.',
@@ -1703,7 +1775,7 @@ export async function apiSaveBatchGuardShifts(url: string, shifts: GuardShiftRec
   return apiSendAction(url, {
     action: 'saveBatchGuardShifts',
     shifts: shifts.map(formatGuardShiftForSheet),
-    replaceTargetDate: replaceTargetDate,
+    replaceTargetDate: replaceTargetDate ? normalizeDateString(replaceTargetDate) : undefined,
   });
 }
 

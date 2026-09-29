@@ -24,7 +24,7 @@ import {
   ChevronRight,
   Filter
 } from 'lucide-react';
-import { BackupSnapshot, AppState, MaterialSignal } from '../types';
+import { BackupSnapshot, AppState, MaterialSignal, normalizeDivision } from '../types';
 import { 
   loadBackupSnapshots, 
   createBackupSnapshot, 
@@ -128,9 +128,9 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
 
   const monthlySummary = useMemo(() => {
     const totalSecs = monthlyMaterials.reduce((acc, m) => acc + durationToSeconds(m.duration), 0);
-    const prensa = monthlyMaterials.filter(m => m.division === 'Prensa').length;
-    const prog = monthlyMaterials.filter(m => m.division === 'Programación').length;
-    const ingesta = monthlyMaterials.filter(m => m.division === 'Ingesta').length;
+    const prensa = monthlyMaterials.filter(m => normalizeDivision(m.division) === 'Archivo de Prensa').length;
+    const prog = monthlyMaterials.filter(m => normalizeDivision(m.division) === 'Archivo de Programación').length;
+    const ingesta = monthlyMaterials.filter(m => normalizeDivision(m.division) === 'Ingesta').length;
     const finalized = monthlyMaterials.filter(m => m.status === 'Finalizado' || m.isFinalized).length;
 
     return {
@@ -445,7 +445,7 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
                   <div className="p-3 bg-slate-900/90 rounded-xl border border-slate-800">
                     <span className="text-[10px] text-slate-400 uppercase font-bold block">Prensa / Prog</span>
                     <span className="text-sm font-bold text-slate-200 mt-1 block">
-                      {dailyMaterials.filter(m => m.division === 'Prensa').length} Prensa • {dailyMaterials.filter(m => m.division === 'Programación').length} Prog
+                      {dailyMaterials.filter(m => normalizeDivision(m.division) === 'Archivo de Prensa').length} Prensa • {dailyMaterials.filter(m => normalizeDivision(m.division) === 'Archivo de Programación').length} Prog
                     </span>
                   </div>
                   <div className="p-3 bg-slate-900/90 rounded-xl border border-slate-800">

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { MaterialFamilyGroup, MaterialSignal, UserProfile } from '../types';
+import { MaterialFamilyGroup, MaterialSignal, UserProfile, normalizeDivision } from '../types';
 import { durationToSeconds, formatHoursVerbose, getFormattedDateTime, formatDurationHHMMSS } from '../services/apiService';
 import {
   canUserCreateMaterial,
@@ -113,13 +113,16 @@ export const MaterialContainerCard: React.FC<MaterialContainerCardProps> = ({
   };
 
   const getDivisionBadge = (division: MaterialSignal['division']) => {
-    switch (division) {
-      case 'Prensa':
+    const norm = normalizeDivision(division);
+    switch (norm) {
+      case 'Archivo de Prensa':
         return 'bg-red-500/20 text-red-300 border-red-500/30';
-      case 'Programación':
+      case 'Archivo de Programación':
         return 'bg-blue-500/20 text-blue-300 border-blue-500/30';
       case 'Ingesta':
         return 'bg-amber-500/20 text-amber-300 border-amber-500/30';
+      case 'Gerencia':
+        return 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30';
       default:
         return 'bg-slate-700 text-slate-300';
     }
@@ -182,7 +185,7 @@ export const MaterialContainerCard: React.FC<MaterialContainerCardProps> = ({
                 {group.familyId}
               </span>
               <span className={`text-[11px] font-bold px-2 py-0.5 rounded border ${getDivisionBadge(group.division)}`}>
-                {group.division}
+                {normalizeDivision(group.division)}
               </span>
               {getStatusBadge(group.overallStatus)}
             </div>

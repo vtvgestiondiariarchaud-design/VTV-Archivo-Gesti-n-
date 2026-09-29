@@ -322,7 +322,7 @@ function reorganizeAndMigrateAllSheets() {
         familyId: famVal || idVal || ("MAT-REC-" + (i + 1)),
         signalType: signalVal,
         title: titleVal,
-        division: String(getVal(colMap.division, 4) || "Prensa").trim(),
+        division: String(getVal(colMap.division, 4) || "Archivo de Prensa").trim(),
         duration: cleanDuration,
         creationDate: formatDateString(getVal(colMap.creationDate, 6)),
         createdBy: String(getVal(colMap.createdBy, 7) || "").trim(),
@@ -421,7 +421,7 @@ function reorganizeAndMigrateAllSheets() {
         id: String(p[0] || "per-" + (i + 1)).trim(),
         name: String(p[1] || "Personal").trim(),
         role: String(p[2] || "Documentalista").trim(),
-        division: String(p[3] || "Prensa").trim(),
+        division: String(p[3] || "Archivo de Prensa").trim(),
         guardDaysWorked: Number(p[4]) || 0,
         daysOffGenerated: Number(p[5]) || 0,
         daysOffTaken: Number(p[6]) || 0,
@@ -463,18 +463,20 @@ function reorganizeAndMigrateAllSheets() {
   const parsedShifts = [];
   if (sShifts && sShifts.getLastRow() > 1) {
     const shValues = sShifts.getRange(2, 1, sShifts.getLastRow() - 1, Math.max(sShifts.getLastColumn(), 8)).getValues();
+    const shDispValues = sShifts.getRange(2, 1, sShifts.getLastRow() - 1, Math.max(sShifts.getLastColumn(), 8)).getDisplayValues();
     for (let i = 0; i < shValues.length; i++) {
       const s = shValues[i];
-      if (!s[0] && !s[1]) continue;
+      const disp = shDispValues[i] || [];
+      if (!s[0] && !s[1] && !disp[1]) continue;
       parsedShifts.push({
-        id: String(s[0] || "sh-" + (i + 1)).trim(),
-        personnelId: String(s[1] || "").trim(),
-        personnelName: String(s[2] || "").trim(),
-        date: formatDateString(s[3]),
-        endDate: s[4] ? formatDateString(s[4]) : "",
-        shiftType: String(s[5] || "Guardia (Fin de semana/Feriado)").trim(),
-        notes: s[6] ? String(s[6]).trim() : "",
-        createdAt: s[7] ? formatDateString(s[7]) : ""
+        id: String(disp[0] || s[0] || "sh-" + (i + 1)).trim(),
+        personnelId: String(disp[1] || s[1] || "").trim(),
+        personnelName: String(disp[2] || s[2] || "").trim(),
+        date: formatGuardDateOnly(disp[3] || s[3]),
+        endDate: (disp[4] || s[4]) ? formatGuardDateOnly(disp[4] || s[4]) : "",
+        shiftType: String(disp[5] || s[5] || "Guardia (Fin de semana/Feriado)").trim(),
+        notes: disp[6] ? String(disp[6]).trim() : (s[6] ? String(s[6]).trim() : ""),
+        createdAt: disp[7] ? String(disp[7]).trim() : (s[7] ? formatDateString(s[7]) : "")
       });
     }
   }
@@ -499,6 +501,7 @@ function reorganizeAndMigrateAllSheets() {
       ];
     });
     sShifts.getRange(2, 1, shRows.length, SHIFTS_HEADERS.length).setValues(shRows);
+    sShifts.getRange(2, 4, shRows.length, 2).setNumberFormat("@");
     sShifts.getRange(2, 4, shRows.length, 2).setHorizontalAlignment("center");
   }
 
@@ -713,7 +716,7 @@ function handleReadAllData() {
         familyId: famVal || cleanMatId,
         title: titleVal,
         signalType: signalVal,
-        division: String(getCol(row, colMap.division, 4) || "Prensa").trim(),
+        division: String(getCol(row, colMap.division, 4) || "Archivo de Prensa").trim(),
         duration: formattedDuration,
         creationDate: formatDateString(getCol(row, colMap.creationDate, 6)),
         createdBy: String(getCol(row, colMap.createdBy, 7) || "").trim(),
@@ -768,7 +771,7 @@ function handleReadAllData() {
         id: String(row[0] || "per-" + (i + 1)).trim(),
         name: String(row[1] || "Personal").trim(),
         role: String(row[2] || "Documentalista").trim(),
-        division: String(row[3] || "Prensa").trim(),
+        division: String(row[3] || "Archivo de Prensa").trim(),
         guardDaysWorked: Number(row[4]) || 0,
         daysOffGenerated: Number(row[5]) || 0,
         daysOffTaken: Number(row[6]) || 0,
@@ -783,18 +786,20 @@ function handleReadAllData() {
   const guardShifts = [];
   if (sShifts && sShifts.getLastRow() > 1) {
     const values = sShifts.getRange(2, 1, sShifts.getLastRow() - 1, SHIFTS_HEADERS.length).getValues();
+    const displayValues = sShifts.getRange(2, 1, sShifts.getLastRow() - 1, SHIFTS_HEADERS.length).getDisplayValues();
     for (let i = 0; i < values.length; i++) {
       const row = values[i];
-      if (!row[0] && !row[1]) continue;
+      const dispRow = displayValues[i] || [];
+      if (!row[0] && !row[1] && !dispRow[1]) continue;
       guardShifts.push({
-        id: String(row[0] || "sh-" + (i + 1)).trim(),
-        personnelId: String(row[1] || "").trim(),
-        personnelName: String(row[2] || "").trim(),
-        date: formatDateString(row[3]),
-        endDate: row[4] ? formatDateString(row[4]) : undefined,
-        shiftType: String(row[5] || "Guardia (Fin de semana/Feriado)").trim(),
-        notes: row[6] ? String(row[6]).trim() : undefined,
-        createdAt: row[7] ? formatDateString(row[7]) : undefined
+        id: String(dispRow[0] || row[0] || "sh-" + (i + 1)).trim(),
+        personnelId: String(dispRow[1] || row[1] || "").trim(),
+        personnelName: String(dispRow[2] || row[2] || "").trim(),
+        date: formatGuardDateOnly(dispRow[3] || row[3]),
+        endDate: (dispRow[4] || row[4]) ? formatGuardDateOnly(dispRow[4] || row[4]) : undefined,
+        shiftType: String(dispRow[5] || row[5] || "Guardia (Fin de semana/Feriado)").trim(),
+        notes: dispRow[6] ? String(dispRow[6]).trim() : (row[6] ? String(row[6]).trim() : undefined),
+        createdAt: dispRow[7] ? String(dispRow[7]).trim() : (row[7] ? formatDateString(row[7]) : undefined)
       });
     }
   }
@@ -1042,7 +1047,7 @@ function materialToRowArray(m, colMap) {
     familyId: m.familyId || m.id || "",
     signalType: m.signalType || "Limpio",
     title: m.title || "",
-    division: m.division || "Prensa",
+    division: m.division || "Archivo de Prensa",
     duration: cleanDuration,
     creationDate: m.creationDate || "",
     createdBy: m.createdBy || "",
@@ -1125,12 +1130,14 @@ function personnelToRowArray(p) {
 }
 
 function guardShiftToRowArray(s) {
+  var cleanDate = formatGuardDateOnly(s.date);
+  var cleanEndDate = s.endDate ? formatGuardDateOnly(s.endDate) : "";
   return [
     s.id || "",
     s.personnelId || "",
     s.personnelName || "",
-    s.date || "",
-    s.endDate || "",
+    cleanDate,
+    cleanEndDate,
     s.shiftType || "Guardia (Fin de semana/Feriado)",
     s.notes || "",
     s.createdAt || ""
@@ -1550,15 +1557,16 @@ function doPost(e) {
     // ==========================================
     if (action === "saveGuardShifts" || action === "createGuardShift" || action === "saveBatchGuardShifts") {
       const shifts = body.shifts || (body.shift ? [body.shift] : []);
-      const replaceTargetDate = body.replaceTargetDate;
+      const replaceTargetDate = body.replaceTargetDate ? formatGuardDateOnly(body.replaceTargetDate) : null;
       const sShifts = ss.getSheetByName(SHEET_GUARDIAS);
 
       if (replaceTargetDate && sShifts.getLastRow() > 1) {
-        const cleanTarget = String(replaceTargetDate).trim().toLowerCase();
         for (let r = sShifts.getLastRow(); r >= 2; r--) {
-          const rowDate = String(sShifts.getRange(r, 4).getValue()).trim().toLowerCase();
+          const cellVal = sShifts.getRange(r, 4).getValue();
+          const dispVal = sShifts.getRange(r, 4).getDisplayValue();
+          const rowDate = formatGuardDateOnly(dispVal || cellVal);
           const rowType = String(sShifts.getRange(r, 6).getValue());
-          if (rowDate === cleanTarget && rowType.indexOf("Guardia") >= 0) {
+          if (rowDate === replaceTargetDate && rowType.indexOf("Guardia") >= 0) {
             sShifts.deleteRow(r);
           }
         }
@@ -1574,6 +1582,10 @@ function doPost(e) {
           sShifts.appendRow(rowData);
         }
       });
+
+      if (sShifts.getLastRow() > 1) {
+        sShifts.getRange(2, 4, sShifts.getLastRow() - 1, 2).setNumberFormat("@");
+      }
 
       return responseJSON({
         success: true,
@@ -1686,6 +1698,7 @@ function doPost(e) {
       if (guardShifts.length > 0) {
         const rowsShifts = guardShifts.map(function(s) { return guardShiftToRowArray(s); });
         sShifts.getRange(2, 1, rowsShifts.length, SHIFTS_HEADERS.length).setValues(rowsShifts);
+        sShifts.getRange(2, 4, rowsShifts.length, 2).setNumberFormat("@");
       }
 
       // D. Cierres
@@ -1798,7 +1811,7 @@ function doPost(e) {
         .setFontWeight("bold").setBackground("#064e3b").setFontColor("#6ee7b7");
       sheet.getRange("D3:F3").merge().setValue("Duración Total: " + (summary.formattedDuration || "00:00:00"))
         .setFontWeight("bold").setBackground("#064e3b").setFontColor("#6ee7b7");
-      sheet.getRange("G3:W3").merge().setValue("Prensa: " + (summary.prensaCount || 0) + " | Programación: " + (summary.programacionCount || 0) + " | Ingesta: " + (summary.ingestaCount || 0) + " | Finalizados: " + (summary.finalizedCount || 0))
+      sheet.getRange("G3:W3").merge().setValue("Archivo de Prensa: " + (summary.prensaCount || 0) + " | Archivo de Programación: " + (summary.programacionCount || 0) + " | Ingesta: " + (summary.ingestaCount || 0) + " | Finalizados: " + (summary.finalizedCount || 0))
         .setFontWeight("bold").setBackground("#134e4a").setFontColor("#ffffff");
 
       sheet.getRange(5, 1, 1, MATERIAL_HEADERS.length).setValues([MATERIAL_HEADERS])
@@ -1893,6 +1906,62 @@ function formatDateString(val) {
     return Utilities.formatDate(val, "GMT-4", "dd/MM/yyyy HH:mm");
   }
   return String(val).trim();
+}
+
+/**
+ * Normaliza fechas de guardias a YYYY-MM-DD sin desfase horario.
+ * Protege contra retroceso de fecha por conversión UTC a husos horarios negativos (GMT-4, GMT-5, GMT-7).
+ */
+function formatGuardDateOnly(val) {
+  if (!val) return "";
+  var pad = function(n) { return (n < 10 ? "0" : "") + n; };
+  if (val instanceof Date) {
+    if (isNaN(val.getTime())) return "";
+    var h = val.getHours();
+    var d = new Date(val.getTime());
+    // Si la hora es >= 17:00 (por ejemplo 20:00 debido a medianoche UTC - 4h), sumar las horas para retornar al día real
+    if (h >= 17) {
+      d.setTime(d.getTime() + (24 - h + 2) * 3600 * 1000);
+    }
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+  }
+
+  var str = String(val).trim();
+  if (!str) return "";
+
+  // 1. Formato DD/MM/YYYY con o sin hora
+  var dmyMatch = str.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})(?:\s+(\d{1,2}):(\d{1,2}))?/);
+  if (dmyMatch) {
+    var day = parseInt(dmyMatch[1], 10);
+    var month = parseInt(dmyMatch[2], 10);
+    var year = parseInt(dmyMatch[3], 10);
+    var hour = dmyMatch[4] ? parseInt(dmyMatch[4], 10) : 0;
+    if (hour >= 17) {
+      var nextDate = new Date(year, month - 1, day + 1);
+      year = nextDate.getFullYear();
+      month = nextDate.getMonth() + 1;
+      day = nextDate.getDate();
+    }
+    return year + "-" + pad(month) + "-" + pad(day);
+  }
+
+  // 2. Formato YYYY-MM-DD con o sin hora
+  var isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{1,2}):(\d{1,2}))?/);
+  if (isoMatch) {
+    var year = parseInt(isoMatch[1], 10);
+    var month = parseInt(isoMatch[2], 10);
+    var day = parseInt(isoMatch[3], 10);
+    var hour = isoMatch[4] ? parseInt(isoMatch[4], 10) : 0;
+    if (hour >= 17) {
+      var nextDate = new Date(year, month - 1, day + 1);
+      year = nextDate.getFullYear();
+      month = nextDate.getMonth() + 1;
+      day = nextDate.getDate();
+    }
+    return year + "-" + pad(month) + "-" + pad(day);
+  }
+
+  return str.substring(0, 10);
 }
 
 function formatDurationString(val) {

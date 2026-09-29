@@ -1,4 +1,38 @@
-export type DivisionType = 'Prensa' | 'Programación' | 'Ingesta' | 'Gerencia';
+export type DivisionType = 
+  | 'Archivo de Programación'
+  | 'Archivo de Prensa'
+  | 'Ingesta'
+  | 'Gerencia'
+  | 'Prensa'          // Compatibilidad heredada
+  | 'Programación';    // Compatibilidad heredada
+
+export const OFFICIAL_DIVISIONS: ('Archivo de Programación' | 'Archivo de Prensa' | 'Ingesta' | 'Gerencia')[] = [
+  'Archivo de Programación',
+  'Archivo de Prensa',
+  'Ingesta',
+  'Gerencia'
+];
+
+/**
+ * Normaliza cualquier variante de división al nombre oficial correspondiente.
+ */
+export const normalizeDivision = (div?: string | null): 'Archivo de Programación' | 'Archivo de Prensa' | 'Ingesta' | 'Gerencia' => {
+  if (!div) return 'Archivo de Prensa';
+  const clean = div.trim().toLowerCase();
+  if (clean.includes('prog') || clean === 'archivo de programación' || clean === 'archivo de programacion') {
+    return 'Archivo de Programación';
+  }
+  if (clean.includes('prens') || clean === 'archivo de prensa') {
+    return 'Archivo de Prensa';
+  }
+  if (clean.includes('ingest')) {
+    return 'Ingesta';
+  }
+  if (clean.includes('geren')) {
+    return 'Gerencia';
+  }
+  return 'Archivo de Prensa';
+};
 
 export type SignalType = 'Limpio' | 'Insert' | 'Master' | string;
 
@@ -154,4 +188,35 @@ export interface AppState {
   isSyncing: boolean;
   lastSyncTime?: string;
   syncError?: string;
+}
+
+export type ErrorLogLevel = 'ERROR' | 'WARN' | 'INFO';
+
+export type ErrorLogCategory = 
+  | 'SYNC_ERROR'
+  | 'API_REQUEST'
+  | 'NETWORK_TIMEOUT'
+  | 'PARSE_ERROR'
+  | 'AUTH_SECURITY'
+  | 'SYSTEM_RUNTIME';
+
+export interface ErrorLogEntry {
+  id: string;
+  timestamp: string; // ISO-8601
+  formattedTime: string; // DD/MM/YYYY, HH:mm:ss
+  level: ErrorLogLevel;
+  category: ErrorLogCategory;
+  action?: string;
+  endpoint?: string;
+  message: string;
+  details?: any;
+  httpStatus?: number | string;
+  userContext?: {
+    id?: string;
+    name?: string;
+    role?: string;
+    division?: string;
+  };
+  stack?: string;
+  userAgent?: string;
 }

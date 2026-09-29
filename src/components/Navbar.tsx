@@ -316,7 +316,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             }`}
           >
             <Settings className="w-4 h-4" />
-            <span>Google Apps Script</span>
+            <span>Ajustes & API</span>
           </button>
         </nav>
       </div>

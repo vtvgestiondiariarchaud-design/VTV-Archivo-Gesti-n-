@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Personnel, UserProfile } from '../types';
+import { Personnel, UserProfile, normalizeDivision } from '../types';
 import { isBlockedUserName } from '../data/initialData';
 import { 
   Archive, 
@@ -84,7 +84,8 @@ export const SelectDocumenterModal: React.FC<SelectDocumenterModalProps> = ({
         p.division.toLowerCase().includes(searchQuery.toLowerCase().trim());
 
       const matchesDivision =
-        divisionFilter === 'Todas' || p.division.toLowerCase() === divisionFilter.toLowerCase();
+        divisionFilter === 'Todas' ||
+        normalizeDivision(p.division).toLowerCase() === normalizeDivision(divisionFilter).toLowerCase();
 
       return matchesSearch && matchesDivision;
     });
@@ -209,7 +210,7 @@ export const SelectDocumenterModal: React.FC<SelectDocumenterModalProps> = ({
 
             {/* Division Pills */}
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-              {['Todas', 'Prensa', 'Programación', 'Ingesta', 'Gerencia'].map((div) => (
+              {['Todas', 'Archivo de Prensa', 'Archivo de Programación', 'Ingesta', 'Gerencia'].map((div) => (
                 <button
                   key={div}
                   type="button"

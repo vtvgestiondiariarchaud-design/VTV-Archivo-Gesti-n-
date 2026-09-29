@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { MaterialSignal, DivisionType, SignalType, UserProfile, MaterialStatus } from '../types';
+import { MaterialSignal, DivisionType, SignalType, UserProfile, MaterialStatus, normalizeDivision } from '../types';
 import { X, Film, Layers, Clock, Calendar, User, FileText, CheckCircle2, Copy, Sparkles, Ban } from 'lucide-react';
 import { getFormattedDateTime, formatDurationHHMMSS, getLocalDateISOString } from '../services/apiService';
 
@@ -57,8 +57,10 @@ export const MaterialModal: React.FC<MaterialModalProps> = ({
   );
   const [isRequestTask, setIsRequestTask] = useState<boolean>(presetIsRequestTask);
   const [title, setTitle] = useState(presetTitle || '');
-  const [division, setDivision] = useState<DivisionType>(
-    presetDivision || (currentUser.division && currentUser.division !== 'Gerencia' ? currentUser.division : 'Prensa')
+  const [division, setDivision] = useState<DivisionType>(() =>
+    presetDivision
+      ? normalizeDivision(presetDivision)
+      : (currentUser.division && currentUser.division !== 'Gerencia' ? normalizeDivision(currentUser.division) : 'Archivo de Prensa')
   );
   const [signalPreset, setSignalPreset] = useState<string>('Limpio');
   const [customSignalName, setCustomSignalName] = useState<string>('');
@@ -83,7 +85,9 @@ export const MaterialModal: React.FC<MaterialModalProps> = ({
       setIsRequestTask(Boolean(presetIsRequestTask));
       setTitle(presetTitle || '');
       setDivision(
-        presetDivision || (currentUser.division && currentUser.division !== 'Gerencia' ? currentUser.division : 'Prensa')
+        presetDivision
+          ? normalizeDivision(presetDivision)
+          : (currentUser.division && currentUser.division !== 'Gerencia' ? normalizeDivision(currentUser.division) : 'Archivo de Prensa')
       );
       setSignalPreset('Limpio');
       setCustomSignalName('');
@@ -343,9 +347,10 @@ export const MaterialModal: React.FC<MaterialModalProps> = ({
                 onChange={(e) => setDivision(e.target.value as DivisionType)}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-blue-500 text-sm font-medium"
               >
-                <option value="Prensa">División 1: Archivo de Prensa</option>
-                <option value="Programación">División 2: Archivo de Programación</option>
-                <option value="Ingesta">División 3: Ingesta</option>
+                <option value="Archivo de Prensa">Archivo de Prensa</option>
+                <option value="Archivo de Programación">Archivo de Programación</option>
+                <option value="Ingesta">Ingesta</option>
+                <option value="Gerencia">Gerencia</option>
               </select>
             </div>
 

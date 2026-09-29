@@ -66,6 +66,8 @@ export const isUserDocumentalistaOrManager = (user?: UserProfile | null): boolea
     user.role === 'Jefe de División' ||
     user.role === 'Gerente de Archivo' ||
     user.role === 'Adjunta de Gerencia' ||
+    user.division === 'Archivo de Prensa' ||
+    user.division === 'Archivo de Programación' ||
     user.division === 'Prensa' ||
     user.division === 'Programación' ||
     user.division === 'Gerencia'

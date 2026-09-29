@@ -49,6 +49,8 @@ import {
   getLocalSessionStartTime,
   isSessionExpired,
   SESSION_MAX_DURATION_MS,
+  getLocalLastUsedUser,
+  saveLocalLastUsedUser,
 } from './services/apiService';
 import { Navbar } from './components/Navbar';
 import { GUEST_USER, isBlockedUserName } from './data/initialData';
@@ -63,6 +65,10 @@ import { AdminPersonnelModule } from './components/AdminPersonnelModule';
 import { DashboardModule } from './components/DashboardModule';
 import { GoogleAppsScriptModal } from './components/GoogleAppsScriptModal';
 import { BackupRestoreModal } from './components/BackupRestoreModal';
+import { initGlobalErrorLogging, logSyncError } from './services/errorLoggingService';
+
+// Initialize global runtime exception and unhandled rejection tracking
+initGlobalErrorLogging();
 
 export default function App() {
   const [state, setState] = useState(() => loadInitialState());
@@ -82,6 +88,8 @@ export default function App() {
     const rem = SESSION_MAX_DURATION_MS - (Date.now() - start);
     return rem > 0 ? Math.max(1, Math.ceil(rem / 60000)) : null;
   });
+
+  const [lastUsedUser, setLastUsedUser] = useState<UserProfile | null>(() => getLocalLastUsedUser());
 
   const [isUserSelectorOpen, setIsUserSelectorOpen] = useState(() => {
     try {
@@ -187,6 +195,12 @@ export default function App() {
           }
         }
       } else {
+        logSyncError(result.message || 'Error de sincronización con Google Sheets', result, 'handleTriggerSync', {
+          id: stateRef.current.currentUser.id,
+          name: stateRef.current.currentUser.name,
+          role: stateRef.current.currentUser.role,
+          division: stateRef.current.currentUser.division,
+        });
         setState((prev) => ({
           ...prev,
           isSyncing: false,
@@ -200,6 +214,12 @@ export default function App() {
       }
     } catch (err: any) {
       const errorMsg = err?.message || 'Error de conexión';
+      logSyncError(`Fallo al sincronizar con Google Sheets: ${errorMsg}`, err, 'handleTriggerSync', {
+        id: stateRef.current.currentUser.id,
+        name: stateRef.current.currentUser.name,
+        role: stateRef.current.currentUser.role,
+        division: stateRef.current.currentUser.division,
+      });
       setState((prev) => ({
         ...prev,
         isSyncing: false,
@@ -472,6 +492,8 @@ export default function App() {
       setSessionExpiredNotice(false);
       setState((prev) => ({ ...prev, currentUser: user }));
       saveLocalActiveUser(user);
+      setLastUsedUser(user);
+      saveLocalLastUsedUser(user);
       showToast(`Perfil iniciado: ${user.name} (${user.role}) • Sesión válida por 1 hora.`);
     }
   };
@@ -1706,6 +1728,7 @@ export default function App() {
         onOpenPinConfig={() => setIsPinModalOpen(true)}
         onLogout={handleLogout}
         sessionExpiredNotice={sessionExpiredNotice}
+        lastUsedUser={lastUsedUser}
       />
 
       <MaterialModal
@@ -1777,7 +1800,7 @@ export default function App() {
             © 2026 <strong>Venezolana de Televisión (VTV)</strong> • Departamento de Archivo Audiovisual
           </span>
           <span className="text-[11px] text-slate-600">
-            Prensa • Programación • Ingesta
+            Archivo de Prensa • Archivo de Programación • Ingesta • Gerencia
           </span>
         </div>
       </footer>

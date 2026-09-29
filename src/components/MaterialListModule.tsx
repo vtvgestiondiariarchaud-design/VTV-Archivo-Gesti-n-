@@ -5,7 +5,8 @@ import {
   DivisionType, 
   UserProfile, 
   Personnel,
-  MonthlyArchiveLog 
+  MonthlyArchiveLog,
+  normalizeDivision
 } from '../types';
 import { 
   groupMaterialsByFamily, 
@@ -227,7 +228,8 @@ export const MaterialListModule: React.FC<MaterialListModuleProps> = ({
 
       // Division
       const matchesDivision =
-        selectedDivision === 'Todas' || mat.division === selectedDivision;
+        selectedDivision === 'Todas' ||
+        normalizeDivision(mat.division) === normalizeDivision(selectedDivision);
 
       // Status
       const matchesStatus =
@@ -702,9 +704,10 @@ export const MaterialListModule: React.FC<MaterialListModuleProps> = ({
               className="px-3 py-2 bg-slate-950 border border-slate-800 text-slate-300 rounded-xl text-xs focus:outline-none focus:border-blue-500"
             >
               <option value="Todas">Todas las Divisiones</option>
-              <option value="Prensa">División 1: Prensa</option>
-              <option value="Programación">División 2: Programación</option>
-              <option value="Ingesta">División 3: Ingesta</option>
+              <option value="Archivo de Prensa">Archivo de Prensa</option>
+              <option value="Archivo de Programación">Archivo de Programación</option>
+              <option value="Ingesta">Ingesta</option>
+              <option value="Gerencia">Gerencia</option>
             </select>
 
             {/* Signal Type Filter (Includes custom signals) */}

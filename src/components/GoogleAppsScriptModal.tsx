@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { GOOGLE_APPS_SCRIPT_CODE } from '../data/appsScriptCode';
 import { 
   Database, 
@@ -11,8 +11,31 @@ import {
   AlertCircle,
   HelpCircle,
   Layers,
-  Wrench
+  Wrench,
+  Download,
+  FileText,
+  Trash2,
+  Bug,
+  ShieldAlert,
+  ChevronDown,
+  ChevronUp,
+  Search,
+  Filter,
+  AlertTriangle,
+  Terminal,
+  Activity,
+  User,
+  Clock,
+  CheckCircle
 } from 'lucide-react';
+import { 
+  getErrorLogs, 
+  downloadLogsFile, 
+  clearErrorLogs, 
+  generateDiagnosticTestLog, 
+  subscribeToLogs 
+} from '../services/errorLoggingService';
+import { ErrorLogEntry } from '../types';
 
 interface GoogleAppsScriptModalProps {
   appsScriptUrl: string;
@@ -43,9 +66,27 @@ export const GoogleAppsScriptModal: React.FC<GoogleAppsScriptModalProps> = ({
   const [isCleaning, setIsCleaning] = useState(false);
   const [isReorganizing, setIsReorganizing] = useState(false);
 
-  React.useEffect(() => {
+  // Error Logging & Technical Audit State
+  const [logs, setLogs] = useState<ErrorLogEntry[]>(() => getErrorLogs());
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
+  const [showLogViewer, setShowLogViewer] = useState(false);
+  const [logFilterCategory, setLogFilterCategory] = useState<string>('ALL');
+  const [logSearchQuery, setLogSearchQuery] = useState('');
+  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+  const [copiedLogId, setCopiedLogId] = useState<string | null>(null);
+
+  useEffect(() => {
     setUrlInput(appsScriptUrl);
   }, [appsScriptUrl]);
+
+  // Subscribe to real-time error logger updates
+  useEffect(() => {
+    const unsubscribe = subscribeToLogs((updatedLogs) => {
+      setLogs(updatedLogs);
+    });
+    return () => unsubscribe();
+  }, []);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -80,8 +121,70 @@ export const GoogleAppsScriptModal: React.FC<GoogleAppsScriptModalProps> = ({
     }
   };
 
+  // Error Logging Handlers
+  const handleDownload = (format: 'log' | 'json') => {
+    setIsDownloading(true);
+    const ok = downloadLogsFile(format);
+    setIsDownloading(false);
+    if (ok) {
+      setDownloadNotice(`✓ Historial de auditoría técnica (.${format}) descargado exitosamente`);
+      setTimeout(() => setDownloadNotice(null), 4000);
+    } else {
+      setDownloadNotice('Error al preparar el archivo para descarga');
+      setTimeout(() => setDownloadNotice(null), 4000);
+    }
+  };
+
+  const handleGenerateProbe = () => {
+    const probe = generateDiagnosticTestLog();
+    setDownloadNotice('✓ Evento de diagnóstico registrado localmente');
+    setShowLogViewer(true);
+    setExpandedLogId(probe.id);
+    setTimeout(() => setDownloadNotice(null), 4000);
+  };
+
+  const handleClear = () => {
+    if (window.confirm('¿Está seguro de vaciar el historial de errores locales? Esta acción reiniciará el registro de auditoría.')) {
+      clearErrorLogs();
+      setDownloadNotice('✓ Historial de logs vaciado correctamente');
+      setTimeout(() => setDownloadNotice(null), 3000);
+    }
+  };
+
+  const handleCopyLogEntry = (log: ErrorLogEntry) => {
+    const text = `[${log.formattedTime}] [${log.level}] [${log.category}]
+Acción: ${log.action || 'N/A'}
+Mensaje: ${log.message}
+Detalles: ${JSON.stringify(log.details || {}, null, 2)}
+Stack: ${log.stack || 'N/A'}`;
+    navigator.clipboard.writeText(text);
+    setCopiedLogId(log.id);
+    setTimeout(() => setCopiedLogId(null), 2500);
+  };
+
+  // Metrics
+  const syncErrorsCount = logs.filter((l) => l.category === 'SYNC_ERROR').length;
+  const apiErrorsCount = logs.filter((l) => l.category === 'API_REQUEST' || l.category === 'NETWORK_TIMEOUT').length;
+  const lastError = logs.length > 0 ? logs[0] : null;
+
+  // Filtered Logs
+  const filteredLogs = logs.filter((log) => {
+    if (logFilterCategory !== 'ALL' && log.category !== logFilterCategory) {
+      return false;
+    }
+    if (logSearchQuery.trim()) {
+      const q = logSearchQuery.toLowerCase();
+      const matchMessage = log.message.toLowerCase().includes(q);
+      const matchAction = log.action?.toLowerCase().includes(q);
+      const matchUser = log.userContext?.name?.toLowerCase().includes(q);
+      const matchDetails = JSON.stringify(log.details || '').toLowerCase().includes(q);
+      return matchMessage || matchAction || matchUser || matchDetails;
+    }
+    return true;
+  });
+
   return (
-    <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
+    <div className="space-y-6 animate-fade-in max-w-5xl mx-auto pb-12">
       {/* Configuration Header Card */}
       <div className="p-6 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl">
         <div className="flex items-center gap-3 mb-4">
@@ -197,6 +300,310 @@ export const GoogleAppsScriptModal: React.FC<GoogleAppsScriptModalProps> = ({
             </div>
           )}
         </form>
+      </div>
+
+      {/* NEW: Error Logging & Technical Audit Card */}
+      <div className="p-6 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl space-y-5">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-3 rounded-2xl bg-rose-600/20 text-rose-400 border border-rose-500/30 shrink-0">
+              <ShieldAlert className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-base font-bold text-white">
+                  Módulo de Registro de Errores y Auditoría Técnica
+                </h3>
+                <span className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider font-extrabold bg-rose-500/20 text-rose-300 border border-rose-500/40 rounded-md">
+                  Error Logging
+                </span>
+                <span className="flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-md">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  Almacenamiento Local Activo
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Captura fallos de sincronización con Google Sheets, peticiones a la API y excepciones para facilitar la auditoría técnica.
+              </p>
+            </div>
+          </div>
+
+          {/* Action Download Buttons */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => handleDownload('log')}
+              disabled={isDownloading}
+              className="px-4 py-2.5 bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-700 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-emerald-950/40 border border-emerald-500/30 transition-all flex items-center gap-2 group active:scale-95"
+              title="Descargar archivo estructurado de logs (.log) para auditoría técnica"
+            >
+              <Download className="w-4 h-4 text-emerald-200 group-hover:-translate-y-0.5 transition-transform" />
+              <span>Descargar Historial de Logs (.log)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleDownload('json')}
+              disabled={isDownloading}
+              className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl border border-slate-700 shadow-sm transition-all flex items-center gap-2"
+              title="Descargar historial completo en formato JSON para análisis automatizado"
+            >
+              <FileText className="w-4 h-4 text-sky-400" />
+              <span className="hidden sm:inline">JSON</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Feedback message banner */}
+        {downloadNotice && (
+          <div className="p-3 bg-emerald-500/15 border border-emerald-500/30 rounded-xl text-emerald-300 text-xs flex items-center gap-2">
+            <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="font-semibold">{downloadNotice}</span>
+          </div>
+        )}
+
+        {/* Metrics Grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+          <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex flex-col justify-between">
+            <div className="text-[11px] text-slate-400 font-medium flex items-center gap-1.5">
+              <Activity className="w-3.5 h-3.5 text-slate-400" />
+              <span>Total Registros</span>
+            </div>
+            <div className="text-xl font-extrabold text-white mt-1">
+              {logs.length}
+            </div>
+          </div>
+
+          <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex flex-col justify-between">
+            <div className="text-[11px] text-slate-400 font-medium flex items-center gap-1.5">
+              <RefreshCw className="w-3.5 h-3.5 text-blue-400" />
+              <span>Sincronización</span>
+            </div>
+            <div className={`text-xl font-extrabold mt-1 ${syncErrorsCount > 0 ? 'text-amber-400' : 'text-slate-300'}`}>
+              {syncErrorsCount}
+            </div>
+          </div>
+
+          <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex flex-col justify-between">
+            <div className="text-[11px] text-slate-400 font-medium flex items-center gap-1.5">
+              <Terminal className="w-3.5 h-3.5 text-rose-400" />
+              <span>Peticiones API</span>
+            </div>
+            <div className={`text-xl font-extrabold mt-1 ${apiErrorsCount > 0 ? 'text-rose-400' : 'text-slate-300'}`}>
+              {apiErrorsCount}
+            </div>
+          </div>
+
+          <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex flex-col justify-between">
+            <div className="text-[11px] text-slate-400 font-medium flex items-center gap-1.5">
+              <Clock className="w-3.5 h-3.5 text-slate-400" />
+              <span>Último Evento</span>
+            </div>
+            <div className="text-xs font-semibold text-slate-300 mt-1 truncate" title={lastError ? lastError.formattedTime : 'Sin registros'}>
+              {lastError ? lastError.formattedTime.split(' ').slice(-2).join(' ') : 'Sin fallos'}
+            </div>
+          </div>
+        </div>
+
+        {/* Action Controls Toolbar */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowLogViewer(!showLogViewer)}
+              className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-lg border border-slate-700 flex items-center gap-1.5 transition-all"
+            >
+              {showLogViewer ? <ChevronUp className="w-3.5 h-3.5 text-slate-400" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400" />}
+              <span>{showLogViewer ? 'Ocultar Historial en Pantalla' : `Ver Historial en Pantalla (${logs.length})`}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleGenerateProbe}
+              className="px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-300 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all"
+              title="Registra un evento de prueba para verificar que el logger y la descarga funcionan perfectamente"
+            >
+              <Bug className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Simular Prueba de Registro</span>
+            </button>
+          </div>
+
+          {logs.length > 0 && (
+            <button
+              type="button"
+              onClick={handleClear}
+              className="px-3 py-1.5 bg-rose-600/10 hover:bg-rose-600/20 border border-rose-500/30 text-rose-300 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all ml-auto"
+              title="Borra todos los logs de error acumulados en este navegador"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+              <span>Limpiar Historial</span>
+            </button>
+          )}
+        </div>
+
+        {/* Collapsible Interactive Log Viewer */}
+        {showLogViewer && (
+          <div className="pt-2 space-y-3 animate-fade-in border-t border-slate-800">
+            {/* Filter and Search Bar */}
+            <div className="flex flex-col sm:flex-row gap-2 items-center justify-between">
+              <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0">
+                {(['ALL', 'SYNC_ERROR', 'API_REQUEST', 'NETWORK_TIMEOUT', 'PARSE_ERROR', 'SYSTEM_RUNTIME'] as const).map((cat) => {
+                  const labelMap: Record<string, string> = {
+                    ALL: 'Todos',
+                    SYNC_ERROR: 'Sincronización',
+                    API_REQUEST: 'API',
+                    NETWORK_TIMEOUT: 'Timeout',
+                    PARSE_ERROR: 'Parseo',
+                    SYSTEM_RUNTIME: 'Sistema',
+                  };
+                  return (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => setLogFilterCategory(cat)}
+                      className={`px-2.5 py-1 text-xs rounded-lg font-bold transition-all whitespace-nowrap ${
+                        logFilterCategory === cat
+                          ? 'bg-blue-600 text-white shadow-sm'
+                          : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
+                      }`}
+                    >
+                      {labelMap[cat]}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="relative w-full sm:w-64">
+                <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={logSearchQuery}
+                  onChange={(e) => setLogSearchQuery(e.target.value)}
+                  placeholder="Buscar en mensajes o acciones..."
+                  className="w-full pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono"
+                />
+              </div>
+            </div>
+
+            {/* Logs List Container */}
+            <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+              {filteredLogs.length === 0 ? (
+                <div className="p-6 text-center rounded-xl bg-slate-950 border border-slate-800/80 text-slate-400 text-xs">
+                  {logs.length === 0
+                    ? 'No se han registrado fallos ni peticiones erróneas. El sistema está operando con normalidad.'
+                    : 'No hay registros que coincidan con el filtro seleccionado.'}
+                </div>
+              ) : (
+                filteredLogs.map((log) => {
+                  const isExpanded = expandedLogId === log.id;
+                  const isError = log.level === 'ERROR';
+                  const isWarn = log.level === 'WARN';
+
+                  return (
+                    <div
+                      key={log.id}
+                      className="p-3 rounded-xl bg-slate-950 border border-slate-800/90 hover:border-slate-700 transition-colors space-y-2"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2 flex-wrap text-xs">
+                          {/* Level badge */}
+                          <span
+                            className={`px-2 py-0.5 rounded font-mono text-[10px] font-bold border ${
+                              isError
+                                ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                                : isWarn
+                                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                                : 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+                            }`}
+                          >
+                            {log.level}
+                          </span>
+
+                          {/* Category badge */}
+                          <span className="px-2 py-0.5 rounded font-mono text-[10px] font-semibold bg-slate-800 text-slate-300 border border-slate-700">
+                            {log.category}
+                          </span>
+
+                          {log.action && (
+                            <span className="text-[11px] font-mono text-cyan-400 font-bold">
+                              [{log.action}]
+                            </span>
+                          )}
+
+                          <span className="text-[11px] text-slate-400">
+                            {log.formattedTime}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleCopyLogEntry(log)}
+                            className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+                            title="Copiar detalles del evento"
+                          >
+                            {copiedLogId === log.id ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setExpandedLogId(isExpanded ? null : log.id)}
+                            className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+                            title={isExpanded ? 'Colapsar detalles' : 'Expandir detalles'}
+                          >
+                            {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Message */}
+                      <p className="text-xs text-slate-200 font-medium leading-relaxed">
+                        {log.message}
+                      </p>
+
+                      {/* User Context if present */}
+                      {log.userContext && (
+                        <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                          <User className="w-3 h-3 text-slate-500" />
+                          <span>
+                            Usuario: <strong className="text-slate-300">{log.userContext.name}</strong> ({log.userContext.role} - {log.userContext.division || 'Sin división'})
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Expanded Technical Details */}
+                      {isExpanded && (
+                        <div className="p-3 rounded-lg bg-slate-900 border border-slate-800 text-[11px] font-mono text-slate-300 space-y-2">
+                          <div className="flex justify-between items-center text-slate-400 text-[10px] pb-1 border-b border-slate-800">
+                            <span>ID: {log.id}</span>
+                            {log.endpoint && <span className="truncate max-w-xs">Endpoint: {log.endpoint}</span>}
+                          </div>
+
+                          {log.details && (
+                            <div>
+                              <span className="text-slate-400 font-bold block mb-1">Detalles Técnicos:</span>
+                              <pre className="p-2 rounded bg-slate-950 text-emerald-400/90 overflow-x-auto text-[10px] max-h-40 leading-relaxed border border-slate-800/80">
+                                {typeof log.details === 'object' ? JSON.stringify(log.details, null, 2) : String(log.details)}
+                              </pre>
+                            </div>
+                          )}
+
+                          {log.stack && (
+                            <div>
+                              <span className="text-slate-400 font-bold block mb-1">Stack Trace:</span>
+                              <pre className="p-2 rounded bg-slate-950 text-rose-300/90 overflow-x-auto text-[10px] max-h-36 leading-relaxed border border-slate-800/80">
+                                {log.stack}
+                              </pre>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Code.gs Script & Instructions Card */}
