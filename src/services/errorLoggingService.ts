@@ -139,7 +139,9 @@ export function logError(params: {
   } else if (entry.level === 'INFO') {
     console.info(consolePrefix, entry.message, entry);
   } else {
-    console.error(consolePrefix, entry.message, entry);
+    // Usamos console.warn en lugar de console.error para no emitir excepciones fatales
+    // al entorno de ejecución cuando se trata de conectividad externa con Google Sheets/Apps Script
+    console.warn(consolePrefix, entry.message, entry);
   }
 
   return entry;

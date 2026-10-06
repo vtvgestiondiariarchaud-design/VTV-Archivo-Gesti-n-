@@ -1431,6 +1431,9 @@ export function formatNetworkErrorMessage(err: any, context = 'Google Sheets'): 
     return `Tiempo de espera agotado al comunicar con ${context}. Google Apps Script tardó en responder. Por favor reintente en unos segundos.`;
   }
   const str = String(err?.message || err || '');
+  if (str.includes('permisos') || str.includes('ppConfig') || str.includes('Google Drive') || str.includes('Cualquier usuario')) {
+    return `Google Apps Script no tiene permisos de acceso público. En Apps Script configure: "Implementar" → "Gestionar implementaciones" → "Quién tiene acceso" = "Cualquier usuario (Anyone)" y guarde una "Nueva versión".`;
+  }
   if (str.includes('Failed to fetch') || str.includes('NetworkError') || str.includes('Load failed')) {
     return `Error de conexión con ${context} (Failed to fetch). Verifique en Google Apps Script: "Desplegar" → "Quién tiene acceso" = "Cualquier persona (Anyone)" y haber guardado una "Nueva versión".`;
   }
@@ -1490,11 +1493,21 @@ export async function safeFetchAppsScript(
       try {
         json = JSON.parse(text);
       } catch {
-        const parseErrMsg = (text.includes('Google Drive') || text.includes('script.google.com'))
-          ? 'Respuesta de Google no válida (posible error de permisos o despliegue en Google Apps Script).'
+        const isHtmlOrGoogleAuth =
+          text.includes('<!DOCTYPE') ||
+          text.includes('<html') ||
+          text.includes('Google Drive') ||
+          text.includes('script.google.com') ||
+          text.includes('ppConfig');
+
+        const parseErrMsg = isHtmlOrGoogleAuth
+          ? 'Google Apps Script no tiene permisos de acceso público (debe configurarse como "Cualquier usuario" / "Anyone" en Gestionar implementaciones).'
           : `Respuesta no JSON recibida del servidor: ${text.substring(0, 150)}`;
+
         logParseError(parseErrMsg, text, payload?.action || 'api_post');
-        throw new Error(parseErrMsg);
+        const customErr = new Error(parseErrMsg);
+        (customErr as any).isPermissionError = true;
+        throw customErr;
       }
 
       if (json.success === false) {
@@ -1513,6 +1526,11 @@ export async function safeFetchAppsScript(
         ? new DOMException('Tiempo de espera agotado al comunicar con Google Sheets', 'TimeoutError')
         : err;
 
+      // Si es error de permisos en Google Apps Script o respuesta HTML, no reintentar en bucle
+      if (err?.isPermissionError) {
+        break;
+      }
+
       if (attempt < maxRetries) {
         console.warn(`[safeFetchAppsScript] Intento ${attempt + 1} falló (${err?.message || err}), reintentando en 1.5s...`);
         await new Promise((res) => setTimeout(res, 1500));
@@ -1521,8 +1539,9 @@ export async function safeFetchAppsScript(
     }
   }
 
-  // Fallback GET si es readAllData y falló POST
-  if (payload?.action === 'readAllData') {
+  // Fallback GET solo si es readAllData, falló POST y NO fue un error de permisos o respuesta HTML
+  const isPermErr = lastError?.isPermissionError || String(lastError?.message || '').includes('permisos');
+  if (payload?.action === 'readAllData' && !isPermErr) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
       try {
@@ -1555,12 +1574,14 @@ export async function safeFetchAppsScript(
   }
 
   const errorMessage = formatNetworkErrorMessage(lastError);
-  logApiError(
-    payload?.action || 'api_fetch',
-    lastError || new Error(errorMessage),
-    cleanUrl,
-    { payloadSummary: typeof payload === 'string' ? payload.slice(0, 200) : payload }
-  );
+  if (!lastError?.isPermissionError) {
+    logApiError(
+      payload?.action || 'api_fetch',
+      lastError || new Error(errorMessage),
+      cleanUrl,
+      { payloadSummary: typeof payload === 'string' ? payload.slice(0, 200) : payload }
+    );
+  }
 
   return {
     success: false,

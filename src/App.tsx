@@ -53,7 +53,7 @@ import {
   saveLocalLastUsedUser,
 } from './services/apiService';
 import { Navbar } from './components/Navbar';
-import { GUEST_USER, isBlockedUserName } from './data/initialData';
+import { GUEST_USER, isBlockedUserName, DEFAULT_APPS_SCRIPT_URL } from './data/initialData';
 import { canUserFinalizeSignal, canUserDeleteMaterial, isGuestUser, canUserPerformActions } from './utils/permissions';
 import { UserRoleSelectorModal } from './components/UserRoleSelectorModal';
 import { MaterialListModule } from './components/MaterialListModule';
@@ -133,6 +133,7 @@ export default function App() {
   const stateRef = React.useRef(state);
   const isSyncingRef = React.useRef(false);
   const lastFocusSyncRef = React.useRef(0);
+  const isSyncPausedDueToErrorRef = React.useRef(false);
 
   useEffect(() => {
     stateRef.current = state;
@@ -149,6 +150,10 @@ export default function App() {
       return;
     }
 
+    if (notify) {
+      isSyncPausedDueToErrorRef.current = false;
+    }
+
     if (isSyncingRef.current) return;
     isSyncingRef.current = true;
 
@@ -157,6 +162,7 @@ export default function App() {
     try {
       const result = await fetchRemoteSheetData(currentUrl);
       if (result.success && result.data) {
+        isSyncPausedDueToErrorRef.current = false;
         const remote = result.data;
         if (remote.materials.length > 0 || remote.personnel.length > 0 || remote.guardShifts.length > 0) {
           saveLocalMaterials(remote.materials);
@@ -195,35 +201,49 @@ export default function App() {
           }
         }
       } else {
-        logSyncError(result.message || 'Error de sincronización con Google Sheets', result, 'handleTriggerSync', {
+        const errorMsg = result.message || 'Error de sincronización con Google Sheets';
+        const isPermissionIssue = errorMsg.includes('permisos') || errorMsg.includes('Cualquier usuario');
+        if (isPermissionIssue) {
+          isSyncPausedDueToErrorRef.current = true;
+        }
+
+        if (notify || !isPermissionIssue) {
+          logSyncError(errorMsg, result, 'handleTriggerSync', {
+            id: stateRef.current.currentUser.id,
+            name: stateRef.current.currentUser.name,
+            role: stateRef.current.currentUser.role,
+            division: stateRef.current.currentUser.division,
+          });
+        }
+        setState((prev) => ({
+          ...prev,
+          isSyncing: false,
+          syncError: errorMsg,
+        }));
+        if (notify) {
+          showToast(errorMsg, 'error');
+        } else {
+          console.warn('Sincronización en segundo plano no completada:', errorMsg);
+        }
+      }
+    } catch (err: any) {
+      const errorMsg = err?.message || 'Error de conexión';
+      const isPermissionIssue = errorMsg.includes('permisos') || errorMsg.includes('Cualquier usuario');
+      if (isPermissionIssue) {
+        isSyncPausedDueToErrorRef.current = true;
+      }
+      if (notify || !isPermissionIssue) {
+        logSyncError(`Fallo al sincronizar con Google Sheets: ${errorMsg}`, err, 'handleTriggerSync', {
           id: stateRef.current.currentUser.id,
           name: stateRef.current.currentUser.name,
           role: stateRef.current.currentUser.role,
           division: stateRef.current.currentUser.division,
         });
-        setState((prev) => ({
-          ...prev,
-          isSyncing: false,
-          syncError: notify ? result.message : prev.syncError,
-        }));
-        if (notify) {
-          showToast(result.message, 'error');
-        } else {
-          console.warn('Sincronización en segundo plano no completada:', result.message);
-        }
       }
-    } catch (err: any) {
-      const errorMsg = err?.message || 'Error de conexión';
-      logSyncError(`Fallo al sincronizar con Google Sheets: ${errorMsg}`, err, 'handleTriggerSync', {
-        id: stateRef.current.currentUser.id,
-        name: stateRef.current.currentUser.name,
-        role: stateRef.current.currentUser.role,
-        division: stateRef.current.currentUser.division,
-      });
       setState((prev) => ({
         ...prev,
         isSyncing: false,
-        syncError: notify ? errorMsg : prev.syncError,
+        syncError: errorMsg,
       }));
       if (notify) {
         showToast(`Error al conectar con Google Sheets: ${errorMsg}`, 'error');
@@ -296,10 +316,12 @@ export default function App() {
     if (!state.appsScriptUrl) return;
 
     const intervalId = setInterval(() => {
+      if (isSyncPausedDueToErrorRef.current) return;
       handleTriggerSync(false);
     }, 45000);
 
     const onWindowFocus = () => {
+      if (isSyncPausedDueToErrorRef.current) return;
       const now = Date.now();
       // Debounce window focus events to at most once every 30 seconds
       if (now - lastFocusSyncRef.current > 30000) {
@@ -1567,10 +1589,12 @@ export default function App() {
 
   // Save Apps Script URL
   const handleSaveAppsScriptUrl = (url: string) => {
-    setState((prev) => ({ ...prev, appsScriptUrl: url }));
-    saveLocalAppsScriptUrl(url);
-    showToast('URL de Google Apps Script actualizada.');
-    if (url && url.startsWith('http')) {
+    const targetUrl = url.trim() || DEFAULT_APPS_SCRIPT_URL;
+    isSyncPausedDueToErrorRef.current = false;
+    setState((prev) => ({ ...prev, appsScriptUrl: targetUrl }));
+    saveLocalAppsScriptUrl(targetUrl);
+    showToast('URL de Google Apps Script guardada.');
+    if (targetUrl.startsWith('http')) {
       setTimeout(() => {
         handleTriggerSync(true);
       }, 300);

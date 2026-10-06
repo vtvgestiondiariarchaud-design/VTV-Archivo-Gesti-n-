@@ -238,7 +238,7 @@ Stack: ${log.stack || 'N/A'}`;
                   Conectado a Google Sheets {lastSyncTime && `(Sincronizado: ${lastSyncTime})`}
                 </span>
               ) : (
-                <span className="text-amber-400 font-bold">Modo Local (Sin URL configurada)</span>
+                <span className="text-amber-400 font-bold">Conectando a Google Sheets...</span>
               )}
             </div>
 
@@ -294,9 +294,29 @@ Stack: ${log.stack || 'N/A'}`;
             </div>
           </div>
           {syncError && (
-            <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-300 text-xs flex items-center gap-2 mt-2">
-              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-              <span>{syncError}</span>
+            <div className="space-y-3 mt-3">
+              <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-300 text-xs flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <span className="font-semibold">{syncError}</span>
+                  {(syncError.includes('permisos') || syncError.includes('Cualquier usuario') || syncError.includes('Respuesta de Google no válida')) && (
+                    <div className="mt-2.5 p-3 bg-slate-950/80 border border-amber-500/30 rounded-lg text-amber-200 text-xs space-y-1.5">
+                      <p className="font-bold text-amber-300 flex items-center gap-1.5">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                        Paso a paso para autorizar el acceso en Google Apps Script:
+                      </p>
+                      <ol className="list-decimal list-inside space-y-1 text-slate-300 pl-1">
+                        <li>En tu hoja de Google Sheets, ve a <strong>Extensiones &gt; Apps Script</strong>.</li>
+                        <li>Haz clic en el botón superior <strong>Implementar &gt; Gestionar implementaciones</strong>.</li>
+                        <li>Pulsa el icono de <strong>Editar (lápiz)</strong> de la implementación activa.</li>
+                        <li>Configura <strong>Quién tiene acceso</strong> en: <span className="text-emerald-400 font-bold">Cualquier usuario (Anyone)</span>.</li>
+                        <li>Selecciona <strong>Versión: Nueva versión</strong> y pulsa <strong>Implementar</strong>.</li>
+                        <li>Copia la URL terminada en <code className="text-amber-300 font-mono">/exec</code> y pégala en el campo superior.</li>
+                      </ol>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
         </form>
