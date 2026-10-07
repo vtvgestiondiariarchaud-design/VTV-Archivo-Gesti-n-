@@ -196,7 +196,8 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({ materials }) =
   }, [periodFilteredMaterials]);
 
   // 1. Estadísticas Oficiales de Operadores en Catalogación ("Para Archivar")
-  // Requisito estricto: Solo los usuarios que le dieron clic en "Para Archivar" son contabilizados en Dashboard y Métricas.
+  // Requisito estricto: El ranking y puesto más alto se determinan PRINCIPALMENTE por "Materiales Únicos (Familias)".
+  // Las tareas "Para Archivar" se preservan como dato extra complementario.
   const catalogerStats = useMemo(() => {
     const map = new Map<
       string,
@@ -241,7 +242,7 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({ materials }) =
       }
     });
 
-    const totalCatalogedCount = Array.from(map.values()).reduce((sum, c) => sum + c.catalogedTasks, 0);
+    const totalFamiliesCount = Array.from(map.values()).reduce((sum, c) => sum + c.familyIds.size, 0);
 
     const list = Array.from(map.values()).map((c) => ({
       name: c.name,
@@ -251,10 +252,17 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({ materials }) =
       formattedHours: formatHoursVerbose(c.totalSeconds),
       divisions: Array.from(c.divisions).join(', ') || 'General',
       lastCatalogedAt: c.lastCatalogedAt,
-      percentage: totalCatalogedCount > 0 ? ((c.catalogedTasks / totalCatalogedCount) * 100).toFixed(1) : '0',
+      percentage: totalFamiliesCount > 0 ? ((c.familyIds.size / totalFamiliesCount) * 100).toFixed(1) : '0',
     }));
 
-    return list.sort((a, b) => b.catalogedTasks - a.catalogedTasks);
+    // Determinar quien tiene el puesto más alto: Materiales Únicos (Familias) como FUENTE PRINCIPAL,
+    // y Tareas "Para Archivar" como desempate / dato complementario
+    return list.sort((a, b) => {
+      if (b.familiesCount !== a.familiesCount) {
+        return b.familiesCount - a.familiesCount;
+      }
+      return b.catalogedTasks - a.catalogedTasks;
+    });
   }, [periodFilteredMaterials]);
 
   // 2. Otras Secciones: Usuarios en Registro y Creación de Materiales
@@ -382,6 +390,7 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({ materials }) =
 
       return {
         name,
+        familiesCount: cat?.familiesCount || cre?.familiesCount || fin?.familiesCount || 0,
         catalogedTasks: cat?.catalogedTasks || 0,
         catalogedHours: cat?.formattedHours || '0s',
         createdCount: cre?.createdCount || 0,
@@ -390,7 +399,12 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({ materials }) =
         finalizedHours: fin?.formattedHours || '0s',
         primaryRole: cat && cat.catalogedTasks > 0 ? 'Catalogador ("Para Archivar")' : fin && fin.finalizedCount > 0 ? 'Finalizador' : 'Creador / Ingesta',
       };
-    }).sort((a, b) => b.catalogedTasks - a.catalogedTasks);
+    }).sort((a, b) => {
+      if (b.familiesCount !== a.familiesCount) {
+        return b.familiesCount - a.familiesCount;
+      }
+      return b.catalogedTasks - a.catalogedTasks;
+    });
   }, [catalogerStats, creatorStats, finalizerStats]);
 
   // Datos para gráfico de barras de operadores catalogadores ("Para Archivar")
@@ -398,7 +412,8 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({ materials }) =
     return catalogerStats.slice(0, 8).map((c) => ({
       name: c.name.length > 14 ? c.name.substring(0, 14) + '...' : c.name,
       fullName: c.name,
-      'Tareas Para Archivar': c.catalogedTasks,
+      'Materiales Únicos (Familias)': c.familiesCount,
+      'Tareas Para Archivar (Dato Extra)': c.catalogedTasks,
       'Horas': +(c.totalSeconds / 3600).toFixed(2),
     }));
   }, [catalogerStats]);
@@ -836,7 +851,7 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({ materials }) =
               <span>Contabilización y Rendimiento de Personal por Rol</span>
             </h3>
             <p className="text-xs text-slate-400 mt-0.5">
-              Separación estricta entre catalogadores ("Para Archivar"), creadores iniciales y finalizadores
+              Clasificación de puesto determinada principalmente por <strong>Materiales Únicos (Familias)</strong>, con registro de tareas "Para Archivar" como dato extra
             </p>
           </div>
 
@@ -906,7 +921,7 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({ materials }) =
           </div>
         </div>
 
-        {/* TAB 1: OPERADORES EN CATALOGACIÓN ("PARA ARCHIVAR") - MÉTRICA PRINCIPAL */}
+        {/* TAB 1: OPERADORES EN CATALOGACIÓN - RANKING PRINCIPAL POR MATERIALES ÚNICOS (FAMILIAS) */}
         {userSectionTab === 'catalogers' && (
           <div className="space-y-4 animate-fade-in">
             {/* Header info */}
@@ -918,22 +933,28 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({ materials }) =
                 <div>
                   <div className="flex items-center gap-2">
                     <h4 className="font-extrabold text-sm text-white">
-                      Métricas de Operadores en Catalogación ("Para Archivar")
+                      Rendimiento de Operadores en Catalogación
                     </h4>
-                    <span className="px-2 py-0.5 rounded-full bg-amber-500/30 text-amber-300 border border-amber-500/50 text-[10px] font-extrabold uppercase">
-                      Métrica Oficial de Archivo
+                    <span className="px-2 py-0.5 rounded-full bg-blue-500/30 text-blue-300 border border-blue-500/50 text-[10px] font-extrabold uppercase">
+                      Ranking: Materiales Únicos (Familias)
                     </span>
                   </div>
                   <p className="text-xs text-slate-300 mt-0.5">
-                    Contabilización exclusiva de usuarios que dieron clic en <strong>"Para Archivar"</strong>. Solo el personal que cataloga señales es clasificado en este ranking.
+                    Clasificación oficial determinada por <strong>Materiales Únicos (Familias)</strong> como fuente principal de puesto. Las <strong>Tareas "Para Archivar"</strong> se registran como dato complementario.
                   </p>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+              <div className="flex items-center gap-3 self-end sm:self-auto shrink-0">
                 <div className="text-right">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Total Catalogadas</span>
-                  <span className="text-sm font-mono font-extrabold text-amber-300">
+                  <span className="text-[10px] uppercase font-bold text-blue-400 block">Materiales Únicos</span>
+                  <span className="text-sm font-mono font-extrabold text-blue-300">
+                    {catalogerStats.reduce((sum, c) => sum + c.familiesCount, 0)} familias
+                  </span>
+                </div>
+                <div className="text-right border-l border-slate-700/60 pl-3">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Dato Extra: "Para Archivar"</span>
+                  <span className="text-xs font-mono font-bold text-amber-300/90">
                     {catalogerStats.reduce((sum, c) => sum + c.catalogedTasks, 0)} tareas
                   </span>
                 </div>
@@ -950,17 +971,24 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({ materials }) =
                       <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-extrabold">
                         <Trophy className="w-3.5 h-3.5 text-amber-400" /> 1º Lugar (Líder)
                       </span>
-                      <span className="font-mono text-xs font-bold text-amber-400">{catalogerStats[0].percentage}%</span>
+                      <span className="font-mono text-xs font-bold text-blue-400" title="Porcentaje de familias catalogadas">{catalogerStats[0].percentage}%</span>
                     </div>
                     <p className="font-bold text-white text-sm truncate">{catalogerStats[0].name}</p>
                     <p className="text-[11px] text-slate-400 truncate">{catalogerStats[0].divisions}</p>
-                    <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between">
-                      <span className="text-xs font-mono font-extrabold text-amber-300">
-                        {catalogerStats[0].catalogedTasks} tareas
-                      </span>
-                      <span className="text-[11px] font-mono text-slate-400">
-                        ⏱️ {catalogerStats[0].formattedHours}
-                      </span>
+                    <div className="mt-3 pt-2 border-t border-slate-800/80 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-mono font-extrabold text-blue-300 flex items-center gap-1">
+                          <Layers className="w-3.5 h-3.5 text-blue-400" />
+                          {catalogerStats[0].familiesCount} Materiales Únicos
+                        </span>
+                        <span className="text-[11px] font-mono text-slate-400">
+                          ⏱️ {catalogerStats[0].formattedHours}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-[11px] font-mono bg-slate-950/60 px-2 py-1 rounded border border-slate-800">
+                        <span className="text-slate-400">Dato extra:</span>
+                        <span className="text-amber-300 font-semibold">{catalogerStats[0].catalogedTasks} tareas "Para Archivar"</span>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -972,17 +1000,24 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({ materials }) =
                       <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-slate-700/60 text-slate-200 border border-slate-600 text-[10px] font-extrabold">
                         <Medal className="w-3.5 h-3.5 text-slate-300" /> 2º Lugar
                       </span>
-                      <span className="font-mono text-xs font-bold text-slate-300">{catalogerStats[1].percentage}%</span>
+                      <span className="font-mono text-xs font-bold text-blue-400" title="Porcentaje de familias catalogadas">{catalogerStats[1].percentage}%</span>
                     </div>
                     <p className="font-bold text-white text-sm truncate">{catalogerStats[1].name}</p>
                     <p className="text-[11px] text-slate-400 truncate">{catalogerStats[1].divisions}</p>
-                    <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between">
-                      <span className="text-xs font-mono font-extrabold text-blue-300">
-                        {catalogerStats[1].catalogedTasks} tareas
-                      </span>
-                      <span className="text-[11px] font-mono text-slate-400">
-                        ⏱️ {catalogerStats[1].formattedHours}
-                      </span>
+                    <div className="mt-3 pt-2 border-t border-slate-800/80 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-mono font-extrabold text-blue-300 flex items-center gap-1">
+                          <Layers className="w-3.5 h-3.5 text-blue-400" />
+                          {catalogerStats[1].familiesCount} Materiales Únicos
+                        </span>
+                        <span className="text-[11px] font-mono text-slate-400">
+                          ⏱️ {catalogerStats[1].formattedHours}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-[11px] font-mono bg-slate-950/60 px-2 py-1 rounded border border-slate-800">
+                        <span className="text-slate-400">Dato extra:</span>
+                        <span className="text-amber-300 font-semibold">{catalogerStats[1].catalogedTasks} tareas "Para Archivar"</span>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -994,31 +1029,48 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({ materials }) =
                       <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-900/30 text-amber-200 border border-amber-800/60 text-[10px] font-extrabold">
                         <Medal className="w-3.5 h-3.5 text-amber-400" /> 3º Lugar
                       </span>
-                      <span className="font-mono text-xs font-bold text-amber-300">{catalogerStats[2].percentage}%</span>
+                      <span className="font-mono text-xs font-bold text-blue-400" title="Porcentaje de familias catalogadas">{catalogerStats[2].percentage}%</span>
                     </div>
                     <p className="font-bold text-white text-sm truncate">{catalogerStats[2].name}</p>
                     <p className="text-[11px] text-slate-400 truncate">{catalogerStats[2].divisions}</p>
-                    <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between">
-                      <span className="text-xs font-mono font-extrabold text-amber-200">
-                        {catalogerStats[2].catalogedTasks} tareas
-                      </span>
-                      <span className="text-[11px] font-mono text-slate-400">
-                        ⏱️ {catalogerStats[2].formattedHours}
-                      </span>
+                    <div className="mt-3 pt-2 border-t border-slate-800/80 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-mono font-extrabold text-blue-300 flex items-center gap-1">
+                          <Layers className="w-3.5 h-3.5 text-blue-400" />
+                          {catalogerStats[2].familiesCount} Materiales Únicos
+                        </span>
+                        <span className="text-[11px] font-mono text-slate-400">
+                          ⏱️ {catalogerStats[2].formattedHours}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-[11px] font-mono bg-slate-950/60 px-2 py-1 rounded border border-slate-800">
+                        <span className="text-slate-400">Dato extra:</span>
+                        <span className="text-amber-300 font-semibold">{catalogerStats[2].catalogedTasks} tareas "Para Archivar"</span>
+                      </div>
                     </div>
                   </div>
                 )}
               </div>
             )}
 
-            {/* Bar Chart of Cataloged Tasks per Operator */}
+            {/* Bar Chart of Unique Materials & Cataloged Tasks per Operator */}
             {catalogerChartData.length > 0 && (
               <div className="p-4 rounded-xl bg-slate-950 border border-slate-800">
-                <h4 className="text-xs font-bold text-slate-300 mb-3 flex items-center gap-1.5">
-                  <BarChart3 className="w-4 h-4 text-amber-400" />
-                  <span>Distribución de Tareas "Para Archivar" por Operador:</span>
-                </h4>
-                <div className="h-44 w-full">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mb-3">
+                  <h4 className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                    <BarChart3 className="w-4 h-4 text-blue-400" />
+                    <span>Rendimiento por Operador: Materiales Únicos (Métrica Principal) vs Tareas (Dato Extra)</span>
+                  </h4>
+                  <div className="flex items-center gap-3 text-[11px]">
+                    <span className="flex items-center gap-1.5 text-blue-300 font-bold">
+                      <span className="w-2.5 h-2.5 rounded-sm bg-blue-500 inline-block"></span> Materiales Únicos (Familias)
+                    </span>
+                    <span className="flex items-center gap-1.5 text-amber-300 font-semibold">
+                      <span className="w-2.5 h-2.5 rounded-sm bg-amber-500 inline-block"></span> Tareas "Para Archivar" (Dato Extra)
+                    </span>
+                  </div>
+                </div>
+                <div className="h-48 w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={catalogerChartData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
@@ -1027,7 +1079,8 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({ materials }) =
                       <Tooltip
                         contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#fff', fontSize: '12px' }}
                       />
-                      <Bar dataKey="Tareas Para Archivar" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="Materiales Únicos (Familias)" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="Tareas Para Archivar (Dato Extra)" fill="#f59e0b" radius={[4, 4, 0, 0]} opacity={0.8} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -1052,11 +1105,17 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({ materials }) =
                     <tr>
                       <th className="p-3 text-center">Rank</th>
                       <th className="p-3">Operador / Documentalista</th>
-                      <th className="p-3 text-center">Tareas "Para Archivar"</th>
-                      <th className="p-3 text-center">Materiales Únicos (Familias)</th>
+                      <th className="p-3 text-center bg-blue-950/30 text-blue-300">
+                        <div className="flex items-center justify-center gap-1">
+                          <Layers className="w-3.5 h-3.5 text-blue-400" />
+                          <span>Materiales Únicos (Familias)</span>
+                          <span className="px-1.5 py-0.2 rounded text-[8px] bg-blue-500/30 text-blue-200 uppercase font-black">Principal</span>
+                        </div>
+                      </th>
+                      <th className="p-3 text-center text-slate-400">Tareas "Para Archivar" (Dato Extra)</th>
                       <th className="p-3 text-center">División</th>
                       <th className="p-3 text-right">Horas Catalogadas</th>
-                      <th className="p-3 text-right">% Contribución</th>
+                      <th className="p-3 text-right">% Familias</th>
                       <th className="p-3 text-right">Última Catalogación</th>
                     </tr>
                   </thead>
@@ -1086,13 +1145,15 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({ materials }) =
                           </div>
                           <span>{op.name}</span>
                         </td>
-                        <td className="p-3 text-center font-mono font-bold text-amber-300">
-                          <span className="px-2.5 py-1 rounded-md bg-amber-500/20 border border-amber-500/40">
-                            {op.catalogedTasks} señales
+                        <td className="p-3 text-center font-mono font-extrabold text-blue-300 bg-blue-950/20">
+                          <span className="px-2.5 py-1 rounded-md bg-blue-500/20 border border-blue-500/40 text-sm">
+                            {op.familiesCount}
                           </span>
                         </td>
-                        <td className="p-3 text-center font-mono font-bold text-blue-300">
-                          {op.familiesCount}
+                        <td className="p-3 text-center font-mono text-amber-300/90">
+                          <span className="px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-xs">
+                            {op.catalogedTasks} tareas
+                          </span>
                         </td>
                         <td className="p-3 text-center text-slate-300">
                           <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-[11px]">
@@ -1102,7 +1163,7 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({ materials }) =
                         <td className="p-3 text-right font-mono font-bold text-slate-200">
                           {op.formattedHours}
                         </td>
-                        <td className="p-3 text-right font-mono text-amber-400 font-bold">
+                        <td className="p-3 text-right font-mono text-blue-400 font-bold">
                           {op.percentage}%
                         </td>
                         <td className="p-3 text-right font-mono text-[11px] text-slate-400">
@@ -1304,6 +1365,7 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({ materials }) =
                   <tr>
                     <th className="p-3">Usuario</th>
                     <th className="p-3 text-center">Rol Principal Detectado</th>
+                    <th className="p-3 text-center bg-blue-950/30 text-blue-300">Materiales Únicos (Familias)</th>
                     <th className="p-3 text-center">Catalogadas ("Para Archivar")</th>
                     <th className="p-3 text-center">Materiales Creados</th>
                     <th className="p-3 text-center">Finalizadas</th>
@@ -1326,6 +1388,9 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({ materials }) =
                         }`}>
                           {row.primaryRole}
                         </span>
+                      </td>
+                      <td className="p-3 text-center font-mono font-bold text-blue-300">
+                        {row.familiesCount > 0 ? row.familiesCount : '-'}
                       </td>
                       <td className="p-3 text-center font-mono font-bold text-amber-300">
                         {row.catalogedTasks > 0 ? `${row.catalogedTasks} tareas` : '-'}
